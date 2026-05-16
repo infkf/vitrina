@@ -24,6 +24,8 @@ type Remote struct {
 	IdentityFile string `json:"identity_file,omitempty"`
 	UseSudo      bool   `json:"use_sudo,omitempty"`
 	VitrinaPath  string `json:"vitrina_path,omitempty"`
+	Domain       string `json:"domain,omitempty"`
+	Email        string `json:"email,omitempty"`
 }
 
 type Config struct {
@@ -111,7 +113,7 @@ func Execute(name string, cmd *cobra.Command, args []string) error {
 
 	r.ApplyDefaults()
 
-	remoteArgs := filterRemoteArgs()
+	remoteArgs := filterRemoteArgs(cmd.Name())
 	remoteCmd := buildRemoteCommand(r, cmd.Name(), remoteArgs)
 
 	sshArgs := buildSSHArgs(r, remoteCmd)
@@ -124,10 +126,70 @@ func Execute(name string, cmd *cobra.Command, args []string) error {
 	return sshCmd.Run()
 }
 
-func filterRemoteArgs() []string {
+// RunScript pipes script to bash over SSH, applying sudo when configured.
+func RunScript(r *Remote, script string) error {
+	command := "bash -s"
+	if r.UseSudo && r.User != "root" {
+		command = "sudo " + command
+	}
+	args := buildSSHArgs(r, command)
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdin = strings.NewReader(script)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// RunCommand runs a single shell command over SSH, applying sudo when configured.
+func RunCommand(r *Remote, command string) error {
+	if r.UseSudo && r.User != "root" {
+		command = "sudo " + command
+	}
+	args := buildSSHArgs(r, command)
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// UploadFile copies localPath to remotePath on r via SCP.
+func UploadFile(r *Remote, localPath, remotePath string) error {
+	args := buildSCPArgs(r)
+	args = append(args, localPath, fmt.Sprintf("%s@%s:%s", r.User, r.Host, remotePath))
+	cmd := exec.Command("scp", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func buildSCPArgs(r *Remote) []string {
+	args := []string{
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "PasswordAuthentication=no",
+		"-o", "ConnectTimeout=10",
+		"-P", fmt.Sprintf("%d", r.Port),
+	}
+	if r.IdentityFile != "" {
+		idFile := r.IdentityFile
+		if strings.HasPrefix(idFile, "~/") {
+			home, _ := os.UserHomeDir()
+			idFile = filepath.Join(home, idFile[2:])
+		}
+		args = append(args, "-i", idFile)
+	}
+	return args
+}
+
+func filterRemoteArgs(subcommand string) []string {
+	return filterArgs(os.Args[1:], subcommand)
+}
+
+func filterArgs(raw []string, subcommand string) []string {
 	var result []string
 	skipNext := false
-	for _, arg := range os.Args[1:] {
+	skippedSubcmd := false
+	for _, arg := range raw {
 		if skipNext {
 			skipNext = false
 			continue
@@ -140,6 +202,10 @@ func filterRemoteArgs() []string {
 			continue
 		}
 		if strings.HasPrefix(arg, "--remote=") {
+			continue
+		}
+		if !skippedSubcmd && arg == subcommand {
+			skippedSubcmd = true
 			continue
 		}
 		result = append(result, arg)

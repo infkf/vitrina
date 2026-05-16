@@ -23,8 +23,18 @@ type Config struct {
 	AppsDir      string `json:"apps_dir"`
 }
 
+var baseDir = DefaultConfigDir
+
+func SetBaseDir(dir string) {
+	baseDir = dir
+}
+
+func ResetBaseDir() {
+	baseDir = DefaultConfigDir
+}
+
 func Path() string {
-	return filepath.Join(DefaultConfigDir, DefaultConfigFile)
+	return filepath.Join(baseDir, DefaultConfigFile)
 }
 
 func Exists() bool {
@@ -57,8 +67,8 @@ func Load() (*Config, error) {
 }
 
 func Save(cfg *Config) error {
-	if err := os.MkdirAll(DefaultConfigDir, 0755); err != nil {
-		return fmt.Errorf("failed to create config directory %s: %w", DefaultConfigDir, err)
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory %s: %w", baseDir, err)
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

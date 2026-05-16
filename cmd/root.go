@@ -48,8 +48,15 @@ func requireRoot() error {
 
 func runRemoteOrLocal(fn func(cmd *cobra.Command, args []string) error) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		if remoteName != "" {
-			return remote.Execute(remoteName, cmd, args)
+		name := remoteName
+		if name == "" {
+			if cfg, err := remote.Load(); err == nil && cfg.Default != "" {
+				name = cfg.Default
+			}
+		}
+
+		if name != "" {
+			return remote.Execute(name, cmd, args)
 		}
 		return fn(cmd, args)
 	}

@@ -16,13 +16,14 @@ import (
 var subdomainRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
 
 var addCmd = &cobra.Command{
-	Use:   "add <subdomain> <port>",
+	Use:   "add <subdomain> [port]",
 	Short: "Register a new app and wire it into the proxy",
 	Long: `Creates a Caddy routing rule so <subdomain>.<domain> traffic
 is reverse-proxied to localhost:<port>.
 
+If port is omitted, the next free port starting at 3000 is assigned automatically.
 Optionally generates deployment boilerplate (docker-compose or systemd).`,
-	Args: cobra.ExactArgs(2),
+	Args: cobra.RangeArgs(1, 2),
 	RunE: runRemoteOrLocal(runAdd),
 }
 
@@ -42,19 +43,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	subdomain := args[0]
-	portStr := args[1]
 
 	if !subdomainRegex.MatchString(subdomain) {
 		return fmt.Errorf("invalid subdomain %q: must be alphanumeric with optional hyphens, max 63 chars", subdomain)
-	}
-
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port < 1 || port > 65535 {
-		return fmt.Errorf("invalid port %q: must be an integer between 1 and 65535", portStr)
-	}
-
-	if port == 80 || port == 443 {
-		return fmt.Errorf("port %d is reserved for HTTP/HTTPS — choose an internal port", port)
 	}
 
 	cfg, err := config.Load()
@@ -62,9 +53,26 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fqdn := fmt.Sprintf("%s.%s", subdomain, cfg.Domain)
-
 	store := registry.New()
+
+	var port int
+	if len(args) == 2 {
+		port, err = strconv.Atoi(args[1])
+		if err != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("invalid port %q: must be an integer between 1 and 65535", args[1])
+		}
+		if port == 80 || port == 443 {
+			return fmt.Errorf("port %d is reserved for HTTP/HTTPS — choose an internal port", port)
+		}
+	} else {
+		port, err = store.NextFreePort(3000)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Auto-assigned port %d\n", port)
+	}
+
+	fqdn := fmt.Sprintf("%s.%s", subdomain, cfg.Domain)
 
 	app := &registry.App{
 		Subdomain: subdomain,

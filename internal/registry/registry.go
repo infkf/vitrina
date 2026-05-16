@@ -30,9 +30,11 @@ type data struct {
 }
 
 func New() *Store {
-	return &Store{
-		path: filepath.Join(config.DefaultConfigDir, config.DefaultAppsFile),
-	}
+	return NewWithPath(filepath.Join(config.DefaultConfigDir, config.DefaultAppsFile))
+}
+
+func NewWithPath(path string) *Store {
+	return &Store{path: path}
 }
 
 func (s *Store) load() (*data, error) {
@@ -124,6 +126,28 @@ func (s *Store) Get(subdomain string) (*App, error) {
 		return nil, fmt.Errorf("subdomain %q not found in registry", subdomain)
 	}
 	return app, nil
+}
+
+// NextFreePort returns the lowest available port >= startAt that is not
+// already assigned in the registry and is not 80 or 443.
+func (s *Store) NextFreePort(startAt int) (int, error) {
+	d, err := s.load()
+	if err != nil {
+		return 0, err
+	}
+	used := make(map[int]bool, len(d.Apps))
+	for _, a := range d.Apps {
+		used[a.Port] = true
+	}
+	for p := startAt; p <= 65535; p++ {
+		if p == 80 || p == 443 {
+			continue
+		}
+		if !used[p] {
+			return p, nil
+		}
+	}
+	return 0, fmt.Errorf("no free port found starting at %d", startAt)
 }
 
 func (s *Store) List() ([]*App, error) {

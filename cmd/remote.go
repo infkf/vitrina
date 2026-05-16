@@ -60,12 +60,14 @@ var remoteRemoveCmd = &cobra.Command{
 }
 
 var (
-	rsHost         string
-	rsUser         string
-	rsPort         int
-	rsKey          string
-	rsUseSudo      bool
-	rsVitrinaPath  string
+	rsHost        string
+	rsUser        string
+	rsPort        int
+	rsKey         string
+	rsUseSudo     bool
+	rsVitrinaPath string
+	rsDomain      string
+	rsEmail       string
 )
 
 func init() {
@@ -75,6 +77,8 @@ func init() {
 	remoteSetCmd.Flags().StringVar(&rsKey, "key", "", "SSH identity file path")
 	remoteSetCmd.Flags().BoolVar(&rsUseSudo, "sudo", false, "Prefix remote commands with sudo")
 	remoteSetCmd.Flags().StringVar(&rsVitrinaPath, "vitrina-path", "", "Path to vitrina binary on remote (default: /usr/local/bin/vitrina)")
+	remoteSetCmd.Flags().StringVar(&rsDomain, "domain", "", "Base domain for this VPS (used by bootstrap)")
+	remoteSetCmd.Flags().StringVar(&rsEmail, "email", "", "Let's Encrypt email for this VPS (used by bootstrap)")
 	remoteSetCmd.MarkFlagRequired("host")
 
 	remoteCmd.AddCommand(remoteSetCmd)
@@ -101,6 +105,8 @@ func runRemoteSet(cmd *cobra.Command, args []string) error {
 		IdentityFile: rsKey,
 		UseSudo:      rsUseSudo,
 		VitrinaPath:  rsVitrinaPath,
+		Domain:       rsDomain,
+		Email:        rsEmail,
 	}
 	r.ApplyDefaults()
 
@@ -162,6 +168,12 @@ func runRemoteShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("SSH key:     %s\n", r.IdentityFile)
 	fmt.Printf("Use sudo:    %v\n", r.UseSudo)
 	fmt.Printf("Vitrina:     %s\n", r.VitrinaPath)
+	if r.Domain != "" {
+		fmt.Printf("Domain:      %s\n", r.Domain)
+	}
+	if r.Email != "" {
+		fmt.Printf("Email:       %s\n", r.Email)
+	}
 	if name == cfg.Default {
 		fmt.Println("Default:     yes")
 	}

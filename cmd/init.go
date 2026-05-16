@@ -33,6 +33,9 @@ func init() {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	if err := requireRoot(); err != nil {
+		return err
+	}
 	if config.Exists() {
 		return fmt.Errorf("vitrina is already initialized (config exists at %s)\nDelete it first if you want to re-initialize", config.Path())
 	}
