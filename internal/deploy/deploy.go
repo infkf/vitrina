@@ -116,6 +116,104 @@ func WriteEnvFile(dir string, port int) error {
 	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644)
 }
 
+// ReadEnvFile parses the .env file in dir.
+func ReadEnvFile(dir string) (map[string]string, error) {
+	envPath := filepath.Join(dir, ".env")
+	existing, err := os.ReadFile(envPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string]string), nil
+		}
+		return nil, fmt.Errorf("failed to read %s: %w", envPath, err)
+	}
+
+	env := make(map[string]string)
+	lines := strings.Split(string(existing), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			env[parts[0]] = parts[1]
+		}
+	}
+	return env, nil
+}
+
+// SetEnvVars updates specific keys in dir/.env.
+func SetEnvVars(dir string, vars map[string]string) error {
+	envPath := filepath.Join(dir, ".env")
+	existing, err := os.ReadFile(envPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read %s: %w", envPath, err)
+	}
+
+	var lines []string
+	if len(existing) > 0 {
+		lines = strings.Split(string(existing), "\n")
+	}
+
+	updated := make(map[string]bool)
+	for i, line := range lines {
+		trim := strings.TrimSpace(line)
+		if trim == "" || strings.HasPrefix(trim, "#") {
+			continue
+		}
+		parts := strings.SplitN(trim, "=", 2)
+		if len(parts) == 2 {
+			key := parts[0]
+			if val, ok := vars[key]; ok {
+				lines[i] = fmt.Sprintf("%s=%s", key, val)
+				updated[key] = true
+			}
+		}
+	}
+
+	for k, v := range vars {
+		if !updated[k] {
+			lines = append(lines, fmt.Sprintf("%s=%s", k, v))
+		}
+	}
+
+	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644)
+}
+
+// UnsetEnvVars removes specific keys from dir/.env.
+func UnsetEnvVars(dir string, keys []string) error {
+	envPath := filepath.Join(dir, ".env")
+	existing, err := os.ReadFile(envPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read %s: %w", envPath, err)
+	}
+
+	lines := strings.Split(string(existing), "\n")
+	removeKeys := make(map[string]bool)
+	for _, k := range keys {
+		removeKeys[k] = true
+	}
+
+	var newLines []string
+	for _, line := range lines {
+		trim := strings.TrimSpace(line)
+		if trim == "" || strings.HasPrefix(trim, "#") {
+			newLines = append(newLines, line)
+			continue
+		}
+		parts := strings.SplitN(trim, "=", 2)
+		if len(parts) == 2 && removeKeys[parts[0]] {
+			continue
+		}
+		newLines = append(newLines, line)
+	}
+
+	return os.WriteFile(envPath, []byte(strings.Join(newLines, "\n")), 0644)
+}
+
 // WriteCompose generates docker-compose.yml for subdomain at port.
 // If pf is non-nil, a service is generated per Procfile entry.
 // Only the web process gets a port mapping; other processes are internal-only.

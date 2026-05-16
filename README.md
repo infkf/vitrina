@@ -25,10 +25,19 @@ vitrina -r prod redeploy api
 vitrina -r prod redeploy api --branch staging
 vitrina -r prod redeploy api --tag v1.2.3
 
+# Push a local directory directly
+vitrina -r prod push myapp .
+
+# Set environment variables securely
+vitrina -r prod env set myapp DATABASE_URL=postgres://...
+
+# Set a default remote so you never have to type -r prod again
+vitrina remote default prod
+vitrina logs api
+
 # Observe
-vitrina -r prod logs api
-vitrina -r prod ps
-vitrina -r prod list
+vitrina ps
+vitrina list
 ```
 
 ## Commands
@@ -40,6 +49,8 @@ vitrina -r prod list
 | `add` | `<subdomain> [port]` | `-s` (docker\|systemd\|none) | Register an app; auto-assigns port if omitted |
 | `deploy` | `<subdomain> <git-url>` | `--branch`, `--tag` | Clone, containerize, and route an app |
 | `redeploy` | `<subdomain>` | `--branch`, `--tag` | Pull latest and rebuild containers |
+| `push` | `<subdomain> [local_dir]` | — | Package and deploy a local directory directly |
+| `env` | `list\|set\|unset <subdomain>` | — | Manage secure environment variables |
 | `logs` | `<subdomain>` | `-f/--follow` | Stream container logs |
 | `ps` | — | — | Show container status for all apps |
 | `remove` | `<subdomain>` | `-c` | Remove an app from the proxy |
@@ -75,6 +86,13 @@ vitrina -r prod deploy api https://github.com/user/api
 vitrina -r prod logs api
 vitrina -r prod ps
 vitrina -r prod list
+```
+
+If you only use one server, configure it as your default so you don't have to provide the flag every time:
+
+```bash
+vitrina remote default prod
+vitrina push api .  # runs on prod
 ```
 
 ## Deploy: How It Works
