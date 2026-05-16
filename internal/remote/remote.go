@@ -246,3 +246,25 @@ func buildSSHArgs(r *Remote, remoteCmd string) []string {
 	args = append(args, fmt.Sprintf("%s@%s", r.User, r.Host), remoteCmd)
 	return args
 }
+
+// DownloadFile uses scp to download a remote file to a local path.
+func DownloadFile(r *Remote, remotePath, localPath string) error {
+	args := []string{}
+	if r.IdentityFile != "" {
+		idFile := r.IdentityFile
+		if strings.HasPrefix(idFile, "~/") {
+			home, _ := os.UserHomeDir()
+			idFile = filepath.Join(home, idFile[2:])
+		}
+		args = append(args, "-i", idFile)
+	}
+	args = append(args, "-P", fmt.Sprintf("%d", r.Port))
+	
+	target := fmt.Sprintf("%s@%s:%s", r.User, r.Host, remotePath)
+	args = append(args, target, localPath)
+
+	cmd := exec.Command("scp", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}

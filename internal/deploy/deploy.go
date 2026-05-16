@@ -281,11 +281,18 @@ func ComposeUp(dir string) error {
 }
 
 // ComposeLogs streams docker compose logs in dir.
-func ComposeLogs(dir string, follow bool) error {
+func ComposeLogs(dir string, follow bool, tail, since string, services []string) error {
 	args := []string{"compose", "logs"}
 	if follow {
 		args = append(args, "-f")
 	}
+	if tail != "" {
+		args = append(args, "--tail", tail)
+	}
+	if since != "" {
+		args = append(args, "--since", since)
+	}
+	args = append(args, services...)
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
@@ -293,9 +300,37 @@ func ComposeLogs(dir string, follow bool) error {
 	return cmd.Run()
 }
 
-// ComposePS runs docker compose ps in dir, writing output to stdout.
-func ComposePS(dir string) error {
-	cmd := exec.Command("docker", "compose", "ps")
+// ComposePS runs docker compose ps in dir.
+func ComposePS(dir string, formatJSON bool) ([]byte, error) {
+	args := []string{"compose", "ps"}
+	if formatJSON {
+		args = append(args, "--format", "json")
+	}
+	cmd := exec.Command("docker", args...)
+	cmd.Dir = dir
+	if formatJSON {
+		return cmd.Output()
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return nil, cmd.Run()
+}
+
+// ComposeIsRunning checks if there are active containers for the app in dir.
+func ComposeIsRunning(dir string) bool {
+	cmd := exec.Command("docker", "compose", "ps", "-q")
+	cmd.Dir = dir
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(output))) > 0
+}
+
+// ComposeCommand executes a generic docker compose command in dir.
+func ComposeCommand(dir string, args ...string) error {
+	cmdArgs := append([]string{"compose"}, args...)
+	cmd := exec.Command("docker", cmdArgs...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

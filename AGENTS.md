@@ -12,7 +12,13 @@ go build -o vitrina . # build binary
 go vet ./...          # static analysis
 ```
 
-There are no tests yet. The binary lives at `./vitrina` after build.
+Each internal package has `_test.go` files. Run tests with:
+
+```bash
+go test ./...
+```
+
+The binary lives at `./vitrina` after build.
 
 ## Architecture
 
@@ -20,6 +26,7 @@ There are no tests yet. The binary lives at `./vitrina` after build.
 cmd/            Cobra commands — user-facing logic, argument parsing
   init.go       One-time server setup (Caddyfile, config, directories)
   bootstrap.go  Fresh-VPS setup: installs Docker + Caddy, uploads binary, runs init
+  config.go     Update global config (domain, email)
   add.go        Register a manually-run app; auto-assigns port if omitted
   remove.go     Deregister an app and remove its Caddy snippet
   list.go       Tabular view of registered apps; optional TCP health check
@@ -27,16 +34,21 @@ cmd/            Cobra commands — user-facing logic, argument parsing
   redeploy.go   git pull + docker compose up --build
   push.go       Deploy a local directory directly to a remote VPS
   env.go        Manage secure environment variables for an app
+  lifecycle.go  Stop, start, and restart an app's containers
+  status.go     Show consolidated app metadata and container state
   logs.go       docker compose logs passthrough
   ps.go         docker compose ps for all registered apps
   remote.go     Manage SSH remote profiles; proxy any command over SSH
+  doctor.go     Diagnose and heal inconsistencies across registry, Caddy, and Docker
+  export.go     Backup state to a tarball
+  import.go     Restore state from a tarball
 
 internal/
   config/       Reads/writes /etc/vitrina/config.json (domain, email, paths)
-  registry/     Thread-safe JSON store for /etc/vitrina/apps.json
-  caddy/        Snippet management, caddy validate, reload (3 fallback methods)
+  registry/     Thread-safe JSON store for /etc/vitrina/apps.json; supports Add, Remove, Update, Get, List
+  caddy/        Snippet management, caddy validate, reload (3 fallback methods), ListAppConfigs
   scaffold/     Boilerplate generators: docker-compose.yml, systemd .service
-  deploy/       Git helpers, Procfile parser, docker-compose generator, compose wrappers
+  deploy/       Git helpers, Procfile parser, docker-compose generator, compose wrappers, ComposeIsRunning, env helpers
   remote/       SSH remote profile store; Execute, RunScript, RunCommand, UploadFile
 ```
 
@@ -46,7 +58,7 @@ internal/
 
 ```
 /etc/vitrina/config.json              # {domain, email, caddy_conf_dir, apps_dir}
-/etc/vitrina/apps.json                # {"apps": {"sub": {subdomain, fqdn, port, created_at, scaffold}}}
+/etc/vitrina/apps.json                # {"apps": {"sub": {subdomain, fqdn, port, created_at, scaffold, git_url, git_ref, last_deployed_at, env_keys}}}
 /etc/vitrina/apps/<subdomain>/        # Cloned repo + generated docker-compose.yml / .env
 /etc/caddy/Caddyfile                  # Main config, imports conf.d/*
 /etc/caddy/conf.d/<fqdn>.caddy        # One reverse_proxy block per app
@@ -65,13 +77,41 @@ internal/
 | `redeploy` | `<subdomain>` | `--branch`, `--tag` | Pull/checkout → docker compose up --build |
 | `push` | `<subdomain> [local_dir]` | — | Package and deploy a local directory directly |
 | `env` | `list\|set\|unset <subdomain>` | — | Manage secure environment variables |
-| `logs` | `<subdomain>` | `-f/--follow` (default true) | Passes through to docker compose logs |
-| `ps` | — | — | docker compose ps per registered app |
+| `status` | `<subdomain>` | `--json` | Show consolidated app metadata and container state |
+| `stop/start/restart` | `<subdomain>` | — | Manage app container lifecycle without rebuilding |
+| `logs` | `<subdomain>` | `-f`, `--tail`, `--since` | Passes through to docker compose logs |
+| `ps` | — | `--json` | docker compose ps per registered app |
 | `remote` | `set\|list\|show\|default\|remove` | | Manage remote VPS connections |
+| `doctor` | — | `--heal` | Diagnose inconsistencies; `--heal` auto-fixes |
+| `config update` | — | `--domain`, `--email` | Modify `/etc/vitrina/config.json` |
+| `export` | `[output.tar.gz]` | — | Archive registry, configs, and envs |
+| `import` | `<input.tar.gz>` | — | Restore state from archive |
 
-## Deploy: Source Detection
+## Doctor: Diagnostics & Self-Healing
 
-`deploy` checks in this order and uses the first match:
+`vitrina doctor` cross-references the registry, Caddy configs, app directories, and Docker containers for inconsistencies. Without `--heal`, it reports problems. With `--heal`, it takes non-destructive corrective action:
+
+1. **Caddy configs vs. registry** — Missing snippets are regenerated via `caddy.WriteAppConfig`. Dangling `.caddy` files (no matching registry entry) are deleted.
+2. **App directories vs. registry** — Missing app directories are re-cloned if `GitURL` is set (checks out `GitRef`, generates compose, writes `.env`, runs `ComposeUp`). Stopped containers are restarted via `ComposeUp`.
+3. **Dangling app directories** — Directories with no matching registry entry are logged but intentionally NOT deleted (safety precaution).
+
+After healing, Caddy is validated and reloaded. Works with `-r` for remote execution.
+
+## App Metadata Tracking
+
+The registry `App` struct tracks deployment metadata beyond the basics:
+
+| Field | Set by | Purpose |
+|-------|--------|---------|
+| `GitURL` | `deploy` | Re-clone on `doctor --heal` or future `redeploy` |
+| `GitRef` | `deploy`, `redeploy` | Branch or tag currently deployed (`--tag` overrides `--branch`) |
+| `LastDeployedAt` | `deploy`, `redeploy` | Timestamp of last successful deployment |
+| `EnvKeys` | `env set`, `env unset` | Snapshot of managed env var names (excludes `PORT`) |
+| `HealthPath` | — | Reserved for future HTTP health check support |
+
+`registry.Update(app)` allows in-place mutation of existing apps (used by `redeploy`, `env set`/`unset`). Previously, changing metadata required `remove` + `add`.
+
+`deploy` checks in this order and uses the first match. It also records `GitURL`, `GitRef`, and `LastDeployedAt` in the registry:
 
 1. **Repo has `docker-compose.yml`** — used as-is; writes `.env` with `PORT=<assigned>`
 2. **Repo has `Procfile`** — generates multi-service compose:
@@ -123,3 +163,29 @@ The remote package exposes three SSH helpers (all apply sudo when `UseSudo && Us
 - JSON files use `json.MarshalIndent` with 2-space indent.
 - File permissions: dirs 0755, files 0644.
 - `subdomainRegex` and `requireRoot()` are defined once in the `cmd` package and shared across all command files.
+
+## Areas of Growth
+
+### 1. Inconsistent mutex usage in registry
+
+`registry.Add()` and `registry.Remove()` acquire `sync.Mutex`, but `Get()`, `List()`, and `NextFreePort()` do not. This is benign for a single-user CLI but architecturally inconsistent. If the codebase ever runs commands concurrently or the registry is reused as a library, these reads will race with writes. Fix: acquire the mutex in all public methods, or document the single-goroutine contract.
+
+### 2. Hardcoded paths in caddy validate/reload
+
+`caddy.Validate()` and `caddy.Reload()` hardcode `/etc/caddy/Caddyfile` while `caddy.WriteAppConfig()` and `caddy.WriteMainCaddyfile()` derive paths from `*config.Config`. If `Config.CaddyConfDir` ever changes, validate/reload will silently use the wrong path. Fix: pass `*config.Config` (or the main Caddyfile path) into `Validate()` and `Reload()` so all paths are derived from a single source of truth.
+
+### 3. Shared helpers lack a home
+
+`subdomainRegex` and `requireRoot()` are defined ad-hoc in command files and shared implicitly across `cmd/`. As more commands are added, this pattern scatters validation logic. Consider a `cmd/validate.go` or `internal/cli/` package that collects shared CLI helpers (regexes, root checks, flag parsers) in one place.
+
+### 4. No structured logging or verbosity control
+
+All output uses `fmt.Printf` / `fmt.Fprintf`. There is no `-v/--verbose` flag and no log levels. For debugging production issues on a remote VPS, a simple `log`-based approach with verbosity levels would make `vitrina logs` and error tracing far more useful. Consider a lightweight `internal/log` package wrapping `log.Logger` with level filtering.
+
+### 5. No integration or end-to-end tests
+
+Unit tests exist for each internal package, but there are no integration tests that exercise the full CLI flow (e.g., `add` → `list` → `remove`). Given that filesystem and Caddy state interact, a test harness that runs commands against a temp directory (via `--config-dir` flag or environment variable) would catch cross-package regressions.
+
+### 6. Error context in remote operations
+
+`remote.RunCommand` and `remote.RunScript` return raw command exit codes but limited context about which step failed. Enriching remote errors with the SSH command that failed, the remote host, and truncated stderr would make debugging bootstrap/deploy failures significantly easier.

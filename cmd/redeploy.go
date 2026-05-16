@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"vitrina/internal/config"
 	"vitrina/internal/deploy"
@@ -69,6 +70,16 @@ func runRedeploy(_ *cobra.Command, args []string) error {
 	fmt.Println("Rebuilding containers...")
 	if err := deploy.ComposeUp(appDir); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)
+	}
+
+	app.LastDeployedAt = time.Now().UTC().Format(time.RFC3339)
+	if redeployBranch != "" {
+		app.GitRef = redeployBranch
+	} else if redeployTag != "" {
+		app.GitRef = redeployTag
+	}
+	if err := store.Update(app); err != nil {
+		fmt.Printf("Warning: failed to update app metadata: %v\n", err)
 	}
 
 	fmt.Printf("Redeployed: https://%s\n", app.FQDN)

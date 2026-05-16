@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -45,6 +47,27 @@ func runList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	type listOut struct {
+		App     *registry.App `json:"app"`
+		Routing string        `json:"routing"`
+		Health  string        `json:"health"`
+	}
+
+	var results []listOut
+	for _, app := range apps {
+		results = append(results, listOut{
+			App:     app,
+			Routing: routingStatus(cfg, app),
+			Health:  healthStatus(app, listHealth),
+		})
+	}
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(results)
+	}
+
 	if len(apps) == 0 {
 		fmt.Println("No apps registered. Use 'vitrina add <subdomain> <port>' to get started.")
 		return nil
@@ -54,11 +77,9 @@ func runList(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(w, "SUBDOMAIN\tFQDN\tPORT\tROUTING\tHEALTH")
 	fmt.Fprintln(w, "---\t---\t---\t---\t---")
 
-	for _, app := range apps {
-		routing := routingStatus(cfg, app)
-		health := healthStatus(app, listHealth)
+	for _, r := range results {
 		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n",
-			app.Subdomain, app.FQDN, app.Port, routing, health)
+			r.App.Subdomain, r.App.FQDN, r.App.Port, r.Routing, r.Health)
 	}
 
 	return w.Flush()
@@ -75,11 +96,30 @@ func healthStatus(app *registry.App, check bool) string {
 	if !check {
 		return "-"
 	}
+
+	path := app.HealthPath
+	if path == "" {
+		path = "/"
+	}
+
+	// Try HTTP check first
+	client := http.Client{Timeout: 3 * time.Second}
+	url := fmt.Sprintf("http://127.0.0.1:%d%s", app.Port, path)
+	resp, err := client.Get(url)
+	if err == nil {
+		resp.Body.Close()
+		if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+			return "healthy"
+		}
+		return fmt.Sprintf("unhealthy (%d)", resp.StatusCode)
+	}
+
+	// Fallback to TCP dial
 	addr := fmt.Sprintf("127.0.0.1:%d", app.Port)
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	if err != nil {
 		return "down"
 	}
 	conn.Close()
-	return "reachable"
+	return "reachable (tcp)"
 }

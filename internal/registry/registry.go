@@ -13,11 +13,16 @@ import (
 )
 
 type App struct {
-	Subdomain string `json:"subdomain"`
-	FQDN      string `json:"fqdn"`
-	Port      int    `json:"port"`
-	CreatedAt string `json:"created_at"`
-	Scaffold  string `json:"scaffold,omitempty"`
+	Subdomain      string   `json:"subdomain"`
+	FQDN           string   `json:"fqdn"`
+	Port           int      `json:"port"`
+	CreatedAt      string   `json:"created_at"`
+	Scaffold       string   `json:"scaffold,omitempty"`
+	GitURL         string   `json:"git_url,omitempty"`
+	GitRef         string   `json:"git_ref,omitempty"`
+	HealthPath     string   `json:"health_path,omitempty"`
+	LastDeployedAt string   `json:"last_deployed_at,omitempty"`
+	EnvKeys        []string `json:"env_keys,omitempty"`
 }
 
 type Store struct {
@@ -93,6 +98,23 @@ func (s *Store) Add(app *App) error {
 
 	if app.CreatedAt == "" {
 		app.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	d.Apps[app.Subdomain] = app
+	return s.save(d)
+}
+
+func (s *Store) Update(app *App) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	d, err := s.load()
+	if err != nil {
+		return err
+	}
+
+	if _, exists := d.Apps[app.Subdomain]; !exists {
+		return fmt.Errorf("subdomain %q is not registered in vitrina", app.Subdomain)
 	}
 
 	d.Apps[app.Subdomain] = app

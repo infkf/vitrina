@@ -51,11 +51,19 @@ vitrina list
 | `redeploy` | `<subdomain>` | `--branch`, `--tag` | Pull latest and rebuild containers |
 | `push` | `<subdomain> [local_dir]` | — | Package and deploy a local directory directly |
 | `env` | `list\|set\|unset <subdomain>` | — | Manage secure environment variables |
-| `logs` | `<subdomain>` | `-f/--follow` | Stream container logs |
-| `ps` | — | — | Show container status for all apps |
+| `status` | `<subdomain>` | `--json` | Show consolidated app details and container status |
+| `stop` | `<subdomain>` | — | Pause an app's containers |
+| `start` | `<subdomain>` | — | Resume an app's containers |
+| `restart` | `<subdomain>` | — | Restart an app's containers |
+| `logs` | `<subdomain>` | `-f`, `--tail`, `--since` | Stream container logs |
+| `ps` | — | `--json` | Show container status for all apps |
 | `remove` | `<subdomain>` | `-c` | Remove an app from the proxy |
-| `list` | — | `--health` | Show all registered apps and their proxy status |
+| `list` | — | `--health`, `--json` | Show all registered apps and their proxy status |
 | `remote` | `set\|list\|show\|default\|remove` | | Manage remote VPS connections |
+| `doctor` | — | `--heal` | Diagnose and heal ecosystem inconsistencies |
+| `config update` | — | `--domain`, `--email` | Update global configuration |
+| `export` | `[output.tar.gz]` | — | Export Vitrina state to a backup archive |
+| `import` | `<input.tar.gz>` | — | Import Vitrina state from a backup archive |
 
 ## Bootstrap
 

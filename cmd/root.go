@@ -10,6 +10,7 @@ import (
 )
 
 var remoteName string
+var jsonOutput bool
 
 var rootCmd = &cobra.Command{
 	Use:   "vitrina",
@@ -30,6 +31,8 @@ Remote execution:
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&remoteName, "remote", "r", "",
 		"Execute on remote VPS (configure with 'vitrina remote set')")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false,
+		"Output structured JSON instead of human-readable text")
 }
 
 func Execute() {

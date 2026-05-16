@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"time"
+
 	"vitrina/internal/caddy"
 	"vitrina/internal/config"
 	"vitrina/internal/deploy"
@@ -134,10 +136,16 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	app := &registry.App{
-		Subdomain: subdomain,
-		FQDN:      fqdn,
-		Port:      port,
-		Scaffold:  "docker",
+		Subdomain:      subdomain,
+		FQDN:           fqdn,
+		Port:           port,
+		Scaffold:       "docker",
+		GitURL:         repoURL,
+		GitRef:         deployBranch,
+		LastDeployedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if deployTag != "" {
+		app.GitRef = deployTag
 	}
 	if err := store.Add(app); err != nil {
 		caddy.RemoveAppConfig(cfg, fqdn)

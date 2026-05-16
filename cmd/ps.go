@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,19 +41,54 @@ func runPS(_ *cobra.Command, _ []string) error {
 	}
 
 	if len(apps) == 0 {
-		fmt.Println("No apps registered.")
+		if jsonOutput {
+			fmt.Println("[]")
+		} else {
+			fmt.Println("No apps registered.")
+		}
 		return nil
 	}
 
+	type psOut struct {
+		App        *registry.App   `json:"app"`
+		Containers json.RawMessage `json:"containers,omitempty"`
+		Error      string          `json:"error,omitempty"`
+	}
+
+	var results []psOut
+
 	for _, app := range apps {
 		appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
-		fmt.Fprintf(os.Stdout, "=== %s (%s → localhost:%d) ===\n", app.Subdomain, app.FQDN, app.Port)
+		
+		var raw json.RawMessage
+		var errMsg string
+
 		if _, err := os.Stat(appDir); os.IsNotExist(err) {
-			fmt.Println("  (no app directory — registered via 'add', not 'deploy')")
-		} else if err := deploy.ComposePS(appDir); err != nil {
-			fmt.Printf("  docker compose ps failed: %v\n", err)
+			errMsg = "no app directory — registered via 'add', not 'deploy'"
+		} else {
+			out, err := deploy.ComposePS(appDir, jsonOutput)
+			if err != nil {
+				errMsg = fmt.Sprintf("docker compose ps failed: %v", err)
+			} else if jsonOutput && len(out) > 0 {
+				raw = out
+			}
 		}
-		fmt.Println()
+
+		if jsonOutput {
+			results = append(results, psOut{App: app, Containers: raw, Error: errMsg})
+		} else {
+			fmt.Fprintf(os.Stdout, "=== %s (%s → localhost:%d) ===\n", app.Subdomain, app.FQDN, app.Port)
+			if errMsg != "" {
+				fmt.Printf("  %s\n", errMsg)
+			}
+			fmt.Println()
+		}
+	}
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(results)
 	}
 
 	return nil

@@ -45,6 +45,23 @@ func AppConfigExists(cfg *config.Config, fqdn string) bool {
 	return err == nil
 }
 
+func ListAppConfigs(cfg *config.Config) ([]string, error) {
+	files, err := os.ReadDir(cfg.CaddyConfDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read caddy config dir: %w", err)
+	}
+	var configs []string
+	for _, f := range files {
+		if !f.IsDir() && strings.HasSuffix(f.Name(), ".caddy") {
+			configs = append(configs, filepath.Join(cfg.CaddyConfDir, f.Name()))
+		}
+	}
+	return configs, nil
+}
+
 func Validate() error {
 	cmd := exec.Command("caddy", "validate",
 		"--config", "/etc/caddy/Caddyfile",

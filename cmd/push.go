@@ -70,7 +70,8 @@ func runPush(cmd *cobra.Command, args []string) error {
 	archivePath := filepath.Join(os.TempDir(), fmt.Sprintf("%s-push.tar.gz", subdomain))
 	defer os.Remove(archivePath)
 
-	tarCmd := exec.Command("tar", "-czf", archivePath, "--exclude=.git", "-C", absDir, ".")
+	tarArgs := buildTarArgs(archivePath, absDir, true)
+	tarCmd := exec.Command("tar", tarArgs...)
 	tarCmd.Stdout = os.Stdout
 	tarCmd.Stderr = os.Stderr
 	if err := tarCmd.Run(); err != nil {
@@ -128,7 +129,8 @@ func runLocalPush(subdomain, localDir string) error {
 	archivePath := filepath.Join(os.TempDir(), fmt.Sprintf("%s-push.tar", subdomain))
 	defer os.Remove(archivePath)
 
-	tarCmd := exec.Command("tar", "-cf", archivePath, "--exclude=.git", "-C", localDir, ".")
+	tarArgs := buildTarArgs(archivePath, localDir, false)
+	tarCmd := exec.Command("tar", tarArgs...)
 	if err := tarCmd.Run(); err != nil {
 		return fmt.Errorf("failed to create local archive: %w", err)
 	}
@@ -153,4 +155,20 @@ func runLocalPush(subdomain, localDir string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func buildTarArgs(archivePath, localDir string, compress bool) []string {
+	flag := "-cf"
+	if compress {
+		flag = "-czf"
+	}
+	args := []string{flag, archivePath, "--exclude=.git"}
+
+	ignoreFile := filepath.Join(localDir, ".vitrinaignore")
+	if _, err := os.Stat(ignoreFile); err == nil {
+		args = append(args, fmt.Sprintf("--exclude-from=%s", ignoreFile))
+	}
+
+	args = append(args, "-C", localDir, ".")
+	return args
 }

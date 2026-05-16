@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -75,8 +76,18 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(vars) == 0 {
-		fmt.Println("No environment variables set.")
+		if jsonOutput {
+			fmt.Println("{}")
+		} else {
+			fmt.Println("No environment variables set.")
+		}
 		return nil
+	}
+
+	if jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(vars)
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
@@ -122,6 +133,17 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	appVars, _ := deploy.ReadEnvFile(appDir)
+	app.EnvKeys = []string{}
+	for k := range appVars {
+		if k != "PORT" {
+			app.EnvKeys = append(app.EnvKeys, k)
+		}
+	}
+	if err := store.Update(app); err != nil {
+		fmt.Printf("Warning: failed to update app metadata: %v\n", err)
+	}
+
 	fmt.Printf("Environment variables set. Run 'vitrina redeploy %s' to apply changes.\n", subdomain)
 	return nil
 }
@@ -155,6 +177,17 @@ func runEnvUnset(cmd *cobra.Command, args []string) error {
 
 	if err := deploy.UnsetEnvVars(appDir, keys); err != nil {
 		return err
+	}
+
+	appVars, _ := deploy.ReadEnvFile(appDir)
+	app.EnvKeys = []string{}
+	for k := range appVars {
+		if k != "PORT" {
+			app.EnvKeys = append(app.EnvKeys, k)
+		}
+	}
+	if err := store.Update(app); err != nil {
+		fmt.Printf("Warning: failed to update app metadata: %v\n", err)
 	}
 
 	fmt.Printf("Environment variables unset. Run 'vitrina redeploy %s' to apply changes.\n", subdomain)
