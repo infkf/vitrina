@@ -42,6 +42,7 @@ cmd/            Cobra commands — user-facing logic, argument parsing
   doctor.go     Diagnose and heal inconsistencies across registry, Caddy, and Docker
   export.go     Backup state to a tarball
   import.go     Restore state from a tarball
+  mcp.go        Start MCP server for AI agent integration
 
 internal/
   config/       Reads/writes /etc/vitrina/config.json (domain, email, paths)
@@ -50,6 +51,7 @@ internal/
   scaffold/     Boilerplate generators: docker-compose.yml, systemd .service
   deploy/       Git helpers, Procfile parser, docker-compose generator, compose wrappers, ComposeIsRunning, env helpers
   remote/       SSH remote profile store; Execute, RunScript, RunCommand, UploadFile
+  mcp/          MCP server exposing Vitrina commands as tools for AI agents
 ```
 
 **Key principle:** One app = one `.caddy` snippet in `/etc/caddy/conf.d/`. A bad config for one app never breaks the proxy for others.
@@ -86,6 +88,7 @@ internal/
 | `config update` | — | `--domain`, `--email` | Modify `/etc/vitrina/config.json` |
 | `export` | `[output.tar.gz]` | — | Archive registry, configs, and envs |
 | `import` | `<input.tar.gz>` | — | Restore state from archive |
+| `mcp` | — | — | Start MCP server for AI agent integration |
 
 ## Doctor: Diagnostics & Self-Healing
 
@@ -110,6 +113,45 @@ The registry `App` struct tracks deployment metadata beyond the basics:
 | `HealthPath` | — | Reserved for future HTTP health check support |
 
 `registry.Update(app)` allows in-place mutation of existing apps (used by `redeploy`, `env set`/`unset`). Previously, changing metadata required `remove` + `add`.
+
+## MCP Server
+
+`vitrina mcp` starts a Model Context Protocol server over stdio for AI agent integration. It exposes Vitrina operations as tools callable by MCP clients (Claude, Cursor, opencode, etc.).
+
+Configuration for MCP clients:
+
+```json
+{
+  "mcpServers": {
+    "vitrina": {
+      "command": "sudo",
+      "args": ["vitrina", "mcp"]
+    }
+  }
+}
+```
+
+**Exposed tools:**
+
+| Tool | Description |
+|------|-------------|
+| `list_apps` | List all registered apps with routing status and optional health checks |
+| `get_app` | Get detailed status of one app (git info, env, containers) |
+| `add_app` | Register a new app and wire it into the proxy |
+| `deploy_app` | Clone a git repo and deploy it |
+| `redeploy_app` | Pull latest changes and rebuild containers |
+| `remove_app` | Remove an app from the proxy |
+| `stop_app` | Stop an app's Docker containers |
+| `start_app` | Start an app's Docker containers |
+| `restart_app` | Restart an app's Docker containers |
+| `env_list` | List environment variables for an app |
+| `env_set` | Set environment variables (key-value object) |
+| `env_unset` | Unset environment variables (array of keys) |
+| `app_logs` | Get container logs with optional tail/since/services filters |
+| `ps_apps` | List running containers for all apps |
+| `doctor` | Diagnose inconsistencies; optionally heal them |
+
+Tool handlers call `internal/*` packages directly (not CLI commands) and use `exec.Command.CombinedOutput()` for shell-out operations to capture output for MCP responses. Mutating operations require root — configure MCP clients to run `vitrina mcp` via `sudo`.
 
 `deploy` checks in this order and uses the first match. It also records `GitURL`, `GitRef`, and `LastDeployedAt` in the registry:
 
@@ -158,7 +200,7 @@ The remote package exposes three SSH helpers (all apply sudo when `UseSudo && Us
 
 ## Conventions
 
-- Go stdlib preferred over external dependencies. Only `cobra` + `pflag` are imported.
+- Go stdlib preferred over external dependencies. Only `cobra`, `pflag`, and `mcp-go` are imported.
 - Errors are returned, not panic'd. Commands use `RunE` and write to `cmd.ErrOrStderr()` for non-fatal warnings.
 - JSON files use `json.MarshalIndent` with 2-space indent.
 - File permissions: dirs 0755, files 0644.

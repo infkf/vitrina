@@ -55,7 +55,9 @@ These were all listed as missing in the first draft. Now they're real:
 
 The same question remains from v1, but the answer is clearer now: stay single-server, keep polishing. The features that shipped since v1 (doctor, status, lifecycle, metadata tracking, export/import) all share one trait — they make the existing single-VPS workflow more reliable without adding conceptual weight. That's the right direction.
 
-An MCP server would be a natural extension — exposing Vitrina commands as tools for AI agents to call directly. That stays single-server (the agent just runs `vitrina` commands locally or via SSH) and makes the "too lazy to deploy" origin story recursive: let the AI do the deploying.
+**MCP server is live.** `vitrina mcp` exposes all Vitrina operations as Model Context Protocol tools over stdio. AI agents (Claude, Cursor, opencode) can call `deploy_app`, `list_apps`, `doctor` with `--heal`, etc. directly without shell parsing. The handlers use `internal/*` packages directly and capture command output via `CombinedOutput()` instead of streaming to os.Stdout. The only new dependency is `mcp-go`.
+
+The MCP server doesn't change the architecture — it's a thin adapter over the same internal packages. But it does make the "too lazy to deploy" origin story recursive: let the AI do the deploying.
 
 Multi-host, dashboards, user management — those are different products. The simplicity is still the feature.
 
@@ -64,6 +66,6 @@ Multi-host, dashboards, user management — those are different products. The si
 - **One command, one job.** `deploy` clones and wires up. `redeploy` pulls and rebuilds. `remove` cleans everything. `doctor` diagnoses, `doctor --heal` fixes. Keep compositing simple.
 - **Fail safe, fail loud.** The rollback pattern is in `add`, `remove`, `deploy`. `config update` needs it too. Every mutation that touches the filesystem or external services should have rollback semantics.
 - **Conservative healing.** `doctor --heal` doesn't delete things it can't verify. This instinct is right. Don't let automation become a footgun.
-- **Stdlib first.** Still only Cobra + pflag as dependencies. Resist the urge to pull in logging frameworks, YAML parsers, or HTTP routers. The simplicity is a feature.
+- **Stdlib first.** Only Cobra, pflag, and mcp-go as dependencies. Resist the urge to pull in logging frameworks, YAML parsers, or HTTP routers. The simplicity is a feature.
 - **Root required for mutation, not for reading.** `list` doesn't need root. `ps` arguably doesn't either. Keep the door open for non-root observability.
 - **Metadata is for machines too.** `--json` output, `EnvKeys` snapshots, `LastDeployedAt` timestamps — these aren't just for humans reading terminals. They're for scripts, agents, and future tooling. Keep adding structured output.
