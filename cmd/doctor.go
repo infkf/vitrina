@@ -108,7 +108,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 				if app.GitURL != "" {
 					appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
 					fmt.Printf("Attempting to heal %s by cloning %s...\n", app.Subdomain, app.GitURL)
-					if err := deploy.CloneRepo(app.GitURL, appDir); err != nil {
+					if err := deploy.CloneRepo(app.GitURL, appDir, false); err != nil {
 						fixes = append(fixes, fmt.Sprintf("Failed to re-clone %s: %v", app.Subdomain, err))
 					} else {
 						if app.GitRef != "" {
@@ -120,7 +120,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 							// Check if we need to write Procfile to Compose
 							pf, _ := deploy.ParseProcfile(appDir)
 							_ = deploy.WriteCompose(appDir, app.Subdomain, app.Port, pf)
-							if err := deploy.ComposeUp(appDir); err == nil {
+							if err := deploy.ComposeUp(appDir, false); err == nil {
 								fixes = append(fixes, fmt.Sprintf("Re-cloned and deployed missing app directory for %s", app.Subdomain))
 							} else {
 								fixes = append(fixes, fmt.Sprintf("Re-cloned but failed to start %s: %v", app.Subdomain, err))
@@ -139,7 +139,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 					if !deploy.ComposeIsRunning(appDir) {
 						issues = append(issues, fmt.Sprintf("Docker containers for %s are not running", app.Subdomain))
 						if healFlag {
-							if err := deploy.ComposeUp(appDir); err != nil {
+							if err := deploy.ComposeUp(appDir, false); err != nil {
 								fixes = append(fixes, fmt.Sprintf("Failed to start containers for %s: %v", app.Subdomain, err))
 							} else {
 								fixes = append(fixes, fmt.Sprintf("Started containers for %s", app.Subdomain))

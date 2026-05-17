@@ -88,6 +88,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
+	fmt.Println("=== Health ===")
+	if app.HealthPath != "" {
+		fmt.Printf("Path:       %s\n", app.HealthPath)
+	} else {
+		fmt.Println("Path:       / (default)")
+	}
+	fmt.Println()
+
 	fmt.Println("=== Environment ===")
 	if len(app.EnvKeys) > 0 {
 		fmt.Printf("Keys:       %s\n", strings.Join(app.EnvKeys, ", "))

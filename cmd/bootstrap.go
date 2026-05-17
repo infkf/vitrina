@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"vitrina/internal/remote"
@@ -154,18 +156,17 @@ func runBootstrap(_ *cobra.Command, args []string) error {
 	binaryPath := bootstrapBinary
 	if binaryPath == "" {
 		if runtime.GOOS != "linux" {
-			return fmt.Errorf(
-				"you are on %s/%s but the VPS needs a Linux binary\n"+
-					"Cross-compile first:\n"+
-					"  GOOS=linux GOARCH=amd64 go build -o vitrina-linux .\n"+
-					"Then run:\n"+
-					"  vitrina bootstrap %s --binary ./vitrina-linux",
-				runtime.GOOS, runtime.GOARCH, remoteName,
-			)
-		}
-		binaryPath, err = os.Executable()
-		if err != nil {
-			return fmt.Errorf("could not locate current executable: %w", err)
+			built, buildErr := autoBuildLinuxBinary(remoteName)
+			if buildErr != nil {
+				return buildErr
+			}
+			defer os.Remove(built)
+			binaryPath = built
+		} else {
+			binaryPath, err = os.Executable()
+			if err != nil {
+				return fmt.Errorf("could not locate current executable: %w", err)
+			}
 		}
 	}
 
@@ -195,4 +196,64 @@ func runBootstrap(_ *cobra.Command, args []string) error {
 	fmt.Printf("\nBootstrap complete. Deploy your first app with:\n")
 	fmt.Printf("  vitrina -r %s deploy <subdomain> <git-url>\n", remoteName)
 	return nil
+}
+
+// autoBuildLinuxBinary cross-compiles a linux/amd64 binary from the source
+// tree (located by finding go.mod above the cwd). Returns the temp file path.
+func autoBuildLinuxBinary(remoteName string) (string, error) {
+	if _, err := exec.LookPath("go"); err != nil {
+		return "", fmt.Errorf(
+			"you are on %s but the VPS needs a Linux binary\n"+
+				"'go' was not found in PATH — cross-compile manually:\n"+
+				"  GOOS=linux GOARCH=amd64 go build -o vitrina-linux .\n"+
+				"  vitrina bootstrap %s --binary ./vitrina-linux",
+			runtime.GOOS, remoteName,
+		)
+	}
+
+	srcDir, err := findGoModDir()
+	if err != nil {
+		return "", fmt.Errorf(
+			"you are on %s but the VPS needs a Linux binary\n"+
+				"could not find go.mod — cross-compile manually:\n"+
+				"  GOOS=linux GOARCH=amd64 go build -o vitrina-linux .\n"+
+				"  vitrina bootstrap %s --binary ./vitrina-linux",
+			runtime.GOOS, remoteName,
+		)
+	}
+
+	tmp, err := os.CreateTemp("", "vitrina-linux-*")
+	if err != nil {
+		return "", fmt.Errorf("could not create temp file: %w", err)
+	}
+	tmp.Close()
+
+	fmt.Println("==> Building Linux binary...")
+	build := exec.Command("go", "build", "-o", tmp.Name(), ".")
+	build.Dir = srcDir
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64")
+	build.Stdout = os.Stderr
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("auto-build failed: %w", err)
+	}
+	return tmp.Name(), nil
+}
+
+func findGoModDir() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("go.mod not found")
+		}
+		dir = parent
+	}
 }

@@ -55,7 +55,7 @@ These were all listed as missing in the first draft. Now they're real:
 
 The same question remains from v1, but the answer is clearer now: stay single-server, keep polishing. The features that shipped since v1 (doctor, status, lifecycle, metadata tracking, export/import) all share one trait — they make the existing single-VPS workflow more reliable without adding conceptual weight. That's the right direction.
 
-**MCP server is live.** `vitrina mcp` exposes all Vitrina operations as Model Context Protocol tools over stdio. AI agents (Claude, Cursor, opencode) can call `deploy_app`, `list_apps`, `doctor` with `--heal`, etc. directly without shell parsing. The handlers use `internal/*` packages directly and capture command output via `CombinedOutput()` instead of streaming to os.Stdout. The only new dependency is `mcp-go`.
+**MCP server is live.** `vitrina mcp` exposes all Vitrina operations as Model Context Protocol tools over stdio. AI agents (Claude, Cursor, opencode) can call `deploy_app`, `list_apps`, `doctor` with `--heal`, etc. directly without shell parsing. The `VITRINA_REMOTE` env var lets the MCP server run on your laptop while delegating all operations to the VPS via SSH — using the same `-r` flag infrastructure the CLI already has. This makes the "too lazy to deploy" origin story recursive: let the AI do the deploying, from wherever you are.
 
 The MCP server doesn't change the architecture — it's a thin adapter over the same internal packages. But it does make the "too lazy to deploy" origin story recursive: let the AI do the deploying.
 

@@ -21,15 +21,29 @@ var configUpdateCmd = &cobra.Command{
 	RunE:  runRemoteOrLocal(runConfigUpdate),
 }
 
+var configHealthPathCmd = &cobra.Command{
+	Use:   "health-path <subdomain> [path]",
+	Short: "Set or clear the health check path for an app",
+	Long: `Set the HTTP path used for health checks (e.g., /health). Use --clear to remove.
+
+The health check path determines which URL is queried when running
+"vitrina list --health". Default is "/".`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: runRemoteOrLocal(runConfigHealthPath),
+}
+
 var (
-	updateDomain string
-	updateEmail  string
+	updateDomain         string
+	updateEmail          string
+	configHealthPathClear bool
 )
 
 func init() {
 	configUpdateCmd.Flags().StringVarP(&updateDomain, "domain", "d", "", "New root domain")
 	configUpdateCmd.Flags().StringVarP(&updateEmail, "email", "e", "", "New ACME email")
+	configHealthPathCmd.Flags().BoolVarP(&configHealthPathClear, "clear", "c", false, "Clear the health path (reset to default)")
 	configCmd.AddCommand(configUpdateCmd)
+	configCmd.AddCommand(configHealthPathCmd)
 	rootCmd.AddCommand(configCmd)
 }
 
@@ -94,6 +108,40 @@ func runConfigUpdate(cmd *cobra.Command, args []string) error {
 	} else {
 		_ = caddy.Reload()
 		fmt.Println("Caddy reloaded successfully.")
+	}
+
+	return nil
+}
+
+func runConfigHealthPath(cmd *cobra.Command, args []string) error {
+	if err := requireRoot(); err != nil {
+		return err
+	}
+
+	subdomain := args[0]
+	store := registry.New()
+	app, err := store.Get(subdomain)
+	if err != nil {
+		return err
+	}
+
+	if configHealthPathClear {
+		app.HealthPath = ""
+	} else {
+		if len(args) < 2 {
+			return fmt.Errorf("path is required (use --clear to clear the health path)")
+		}
+		app.HealthPath = args[1]
+	}
+
+	if err := store.Update(app); err != nil {
+		return err
+	}
+
+	if configHealthPathClear {
+		fmt.Printf("Cleared health path for %s\n", subdomain)
+	} else {
+		fmt.Printf("Set health path for %s to %s\n", subdomain, app.HealthPath)
 	}
 
 	return nil

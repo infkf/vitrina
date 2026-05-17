@@ -35,11 +35,13 @@ The app is reachable at https://<subdomain>.<domain> once containers start.`,
 var (
 	deployBranch string
 	deployTag    string
+	deployQuiet  bool
 )
 
 func init() {
 	deployCmd.Flags().StringVar(&deployBranch, "branch", "", "Checkout this branch after cloning")
 	deployCmd.Flags().StringVar(&deployTag, "tag", "", "Checkout this tag after cloning")
+	deployCmd.Flags().BoolVarP(&deployQuiet, "quiet", "q", false, "Suppress build output; print a timing summary instead")
 	rootCmd.AddCommand(deployCmd)
 }
 
@@ -77,7 +79,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	appDir := filepath.Join(cfg.AppsDir, subdomain)
 
 	fmt.Printf("Cloning %s...\n", repoURL)
-	if err := deploy.CloneRepo(repoURL, appDir); err != nil {
+	if err := deploy.CloneRepo(repoURL, appDir, deployQuiet); err != nil {
 		return fmt.Errorf("clone failed: %w", err)
 	}
 
@@ -154,7 +156,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Starting containers (port %d)...\n", port)
-	if err := deploy.ComposeUp(appDir); err != nil {
+	if err := deploy.ComposeUp(appDir, deployQuiet); err != nil {
 		store.Remove(subdomain)
 		caddy.RemoveAppConfig(cfg, fqdn)
 		os.RemoveAll(appDir)

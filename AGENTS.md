@@ -31,7 +31,7 @@ cmd/            Cobra commands — user-facing logic, argument parsing
   remove.go     Deregister an app and remove its Caddy snippet
   list.go       Tabular view of registered apps; optional TCP health check
   deploy.go     Clone a git repo and wire it up end-to-end
-  redeploy.go   git pull + docker compose up --build
+  redeploy.go   git pull (auto-recovers from force-push) + docker compose up --build; -q suppresses build output; --force uses fetch+reset
   push.go       Deploy a local directory directly to a remote VPS
   env.go        Manage secure environment variables for an app
   lifecycle.go  Stop, start, and restart an app's containers
@@ -40,6 +40,7 @@ cmd/            Cobra commands — user-facing logic, argument parsing
   ps.go         docker compose ps for all registered apps
   remote.go     Manage SSH remote profiles; proxy any command over SSH
   doctor.go     Diagnose and heal inconsistencies across registry, Caddy, and Docker
+  reload.go     Reload Caddy to pick up config changes and retry TLS certs
   export.go     Backup state to a tarball
   import.go     Restore state from a tarball
   mcp.go        Start MCP server for AI agent integration
@@ -49,7 +50,7 @@ internal/
   registry/     Thread-safe JSON store for /etc/vitrina/apps.json; supports Add, Remove, Update, Get, List
   caddy/        Snippet management, caddy validate, reload (3 fallback methods), ListAppConfigs
   scaffold/     Boilerplate generators: docker-compose.yml, systemd .service
-  deploy/       Git helpers, Procfile parser, docker-compose generator, compose wrappers, ComposeIsRunning, env helpers
+  deploy/       Git helpers (CloneRepo, PullLatest with force-push recovery, ForcePull), Procfile parser, docker-compose generator, ComposeUp (quiet mode), ComposeRestart, ComposeIsRunning, env helpers
   remote/       SSH remote profile store; Execute, RunScript, RunCommand, UploadFile
   mcp/          MCP server exposing Vitrina commands as tools for AI agents
 ```
@@ -70,21 +71,22 @@ internal/
 
 | Command | Args | Flags | Notes |
 |---------|------|-------|-------|
-| `bootstrap` | `<remote>` | `--domain`, `--email`, `--binary` | Installs deps, uploads binary, runs init on remote VPS |
+| `bootstrap` | `<remote>` | `--domain`, `--email`, `--binary` | Installs deps, uploads binary, runs init; auto-builds Linux binary if `--binary` omitted and not on Linux |
 | `init` | — | `-d/--domain`, `-e/--email` (required) | Must run once before any other command |
 | `add` | `<subdomain> [port]` | `-s/--scaffold` (docker\|systemd\|none) | Port auto-assigned from 3000 if omitted |
 | `remove` | `<subdomain>` | `-c/--clean` | Removes snippet + registry entry |
 | `list` | — | `--health` (TCP dial check) | Tabwriter-formatted table |
-| `deploy` | `<subdomain> <git-url>` | `--branch`, `--tag` | Clone → compose → Caddy → up |
-| `redeploy` | `<subdomain>` | `--branch`, `--tag` | Pull/checkout → docker compose up --build |
+| `deploy` | `<subdomain> <git-url>` | `--branch`, `--tag`, `-q/--quiet` | Clone → compose → Caddy → up; `-q` suppresses build output, prints timing summary |
+| `redeploy` | `<subdomain>` | `--branch`, `--tag`, `-q/--quiet`, `--force` | Pull/checkout → docker compose up --build; `--force` uses fetch+reset (also auto-triggered on divergence) |
 | `push` | `<subdomain> [local_dir]` | — | Package and deploy a local directory directly |
-| `env` | `list\|set\|unset <subdomain>` | — | Manage secure environment variables |
+| `env` | `list\|set\|unset <subdomain>` | `set/unset: --apply` | Manage secure environment variables; `--apply` calls `ComposeRestart` immediately after |
 | `status` | `<subdomain>` | `--json` | Show consolidated app metadata and container state |
 | `stop/start/restart` | `<subdomain>` | — | Manage app container lifecycle without rebuilding |
 | `logs` | `<subdomain>` | `-f`, `--tail`, `--since` | Passes through to docker compose logs |
 | `ps` | — | `--json` | docker compose ps per registered app |
 | `remote` | `set\|list\|show\|default\|remove` | | Manage remote VPS connections |
 | `doctor` | — | `--heal` | Diagnose inconsistencies; `--heal` auto-fixes |
+| `reload` | — | — | Reload Caddy (retry TLS certs, pick up DNS changes) |
 | `config update` | — | `--domain`, `--email` | Modify `/etc/vitrina/config.json` |
 | `export` | `[output.tar.gz]` | — | Archive registry, configs, and envs |
 | `import` | `<input.tar.gz>` | — | Restore state from archive |
@@ -118,7 +120,7 @@ The registry `App` struct tracks deployment metadata beyond the basics:
 
 `vitrina mcp` starts a Model Context Protocol server over stdio for AI agent integration. It exposes Vitrina operations as tools callable by MCP clients (Claude, Cursor, opencode, etc.).
 
-Configuration for MCP clients:
+**Running locally (requires root + `/etc/vitrina`):**
 
 ```json
 {
@@ -130,6 +132,24 @@ Configuration for MCP clients:
   }
 }
 ```
+
+**Running locally, connecting to a remote VPS:**
+
+Set `VITRINA_REMOTE` to the name of a remote profile configured via `vitrina remote set`. The MCP server delegates all tool calls to the remote VPS via SSH, using the same `-r` flag infrastructure the CLI uses.
+
+```json
+{
+  "mcpServers": {
+    "vitrina": {
+      "command": "vitrina",
+      "args": ["mcp"],
+      "env": { "VITRINA_REMOTE": "prod" }
+    }
+  }
+}
+```
+
+When `VITRINA_REMOTE` is set, tool handlers shell out to `vitrina -r <remote> <command> --json` instead of calling internal packages directly. This means the MCP server runs on your laptop but all operations execute on the VPS.
 
 **Exposed tools:**
 
@@ -151,7 +171,7 @@ Configuration for MCP clients:
 | `ps_apps` | List running containers for all apps |
 | `doctor` | Diagnose inconsistencies; optionally heal them |
 
-Tool handlers call `internal/*` packages directly (not CLI commands) and use `exec.Command.CombinedOutput()` for shell-out operations to capture output for MCP responses. Mutating operations require root — configure MCP clients to run `vitrina mcp` via `sudo`.
+Tool handlers call `internal/*` packages directly when running locally (not via `VITRINA_REMOTE`). When `VITRINA_REMOTE` is set, they delegate to `vitrina -r <remote>` over SSH. Mutating operations require root — configure MCP clients to run `vitrina mcp` via `sudo` when running locally.
 
 `deploy` checks in this order and uses the first match. It also records `GitURL`, `GitRef`, and `LastDeployedAt` in the registry:
 
@@ -183,7 +203,10 @@ Port contract: `PORT=<assigned>` is set in the container environment and mapped 
 `bootstrap` runs entirely from the local machine — it does not use `runRemoteOrLocal`. Steps:
 
 1. Load remote profile by name; resolve domain/email from flags → remote config → error
-2. Resolve binary: `--binary` flag → current executable (Linux only) → error with cross-compile instructions
+2. Resolve binary:
+   - `--binary` flag → use as-is
+   - Not on Linux → `autoBuildLinuxBinary`: find `go.mod` by walking up from cwd, cross-compile via `go build` with `GOOS=linux GOARCH=amd64` to a temp file, clean up after upload; falls back to error with manual instructions if `go` is not in PATH or no `go.mod` found
+   - On Linux → `os.Executable()`
 3. `remote.RunScript(r, installScript)` — pipes the embedded shell script to `bash -s` over SSH
 4. `remote.UploadFile(r, binaryPath, "/tmp/vitrina")` — SCP
 5. `remote.RunCommand(r, "install -m 0755 /tmp/vitrina <VitrinaPath>")` — move binary into place
@@ -224,10 +247,6 @@ The remote package exposes three SSH helpers (all apply sudo when `UseSudo && Us
 
 All output uses `fmt.Printf` / `fmt.Fprintf`. There is no `-v/--verbose` flag and no log levels. For debugging production issues on a remote VPS, a simple `log`-based approach with verbosity levels would make `vitrina logs` and error tracing far more useful. Consider a lightweight `internal/log` package wrapping `log.Logger` with level filtering.
 
-### 5. No integration or end-to-end tests
-
-Unit tests exist for each internal package, but there are no integration tests that exercise the full CLI flow (e.g., `add` → `list` → `remove`). Given that filesystem and Caddy state interact, a test harness that runs commands against a temp directory (via `--config-dir` flag or environment variable) would catch cross-package regressions.
-
-### 6. Error context in remote operations
+### 5. Error context in remote operations
 
 `remote.RunCommand` and `remote.RunScript` return raw command exit codes but limited context about which step failed. Enriching remote errors with the SSH command that failed, the remote host, and truncated stderr would make debugging bootstrap/deploy failures significantly easier.

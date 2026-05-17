@@ -5,12 +5,10 @@ Lightweight PaaS-lite CLI toolbox for managing web apps on a single Linux VPS. U
 ## Quick Start
 
 ```bash
-# Build a Linux binary (required if you're on macOS/Windows)
-GOOS=linux GOARCH=amd64 go build -o vitrina-linux .
-
 # Point at your VPS and bootstrap it in one command
+# (auto-builds a Linux binary from source if you're on macOS/Windows)
 vitrina remote set prod --host 1.2.3.5 --domain mydomain.com --email admin@mydomain.com
-vitrina bootstrap prod --binary ./vitrina-linux
+vitrina bootstrap prod
 
 # Deploy an app from a git repository
 vitrina -r prod deploy api https://github.com/user/api
@@ -25,11 +23,19 @@ vitrina -r prod redeploy api
 vitrina -r prod redeploy api --branch staging
 vitrina -r prod redeploy api --tag v1.2.3
 
+# Force-sync after a force-push (also detected automatically on pull failure)
+vitrina -r prod redeploy api --force
+
+# Suppress build output — print a timing summary instead
+vitrina -r prod deploy api https://github.com/user/api -q
+vitrina -r prod redeploy api -q
+
 # Push a local directory directly
 vitrina -r prod push myapp .
 
 # Set environment variables securely
 vitrina -r prod env set myapp DATABASE_URL=postgres://...
+vitrina -r prod env set myapp DATABASE_URL=postgres://... --apply  # restart immediately
 
 # Set a default remote so you never have to type -r prod again
 vitrina remote default prod
@@ -45,13 +51,13 @@ vitrina status api
 
 | Command | Args | Flags | Description |
 |---------|------|-------|-------------|
-| `bootstrap` | `<remote>` | `--domain`, `--email`, `--binary` | Install Docker, Caddy, and Vitrina on a fresh VPS |
+| `bootstrap` | `<remote>` | `--domain`, `--email`, `--binary` | Install Docker, Caddy, and Vitrina on a fresh VPS; auto-builds Linux binary if `--binary` is omitted |
 | `init` | — | `-d`, `-e` | Initialize Vitrina on this server (called by bootstrap) |
 | `add` | `<subdomain> [port]` | `-s` (docker\|systemd\|none) | Register an app; auto-assigns port if omitted |
-| `deploy` | `<subdomain> <git-url>` | `--branch`, `--tag` | Clone, containerize, and route an app |
-| `redeploy` | `<subdomain>` | `--branch`, `--tag` | Pull latest and rebuild containers |
+| `deploy` | `<subdomain> <git-url>` | `--branch`, `--tag`, `-q/--quiet` | Clone, containerize, and route an app |
+| `redeploy` | `<subdomain>` | `--branch`, `--tag`, `-q/--quiet`, `--force` | Pull latest and rebuild containers; `--force` uses fetch + reset instead of pull |
 | `push` | `<subdomain> [local_dir]` | — | Package and deploy a local directory directly |
-| `env` | `list\|set\|unset <subdomain>` | — | Manage environment variables |
+| `env` | `list\|set\|unset <subdomain>` | `set/unset: --apply` | Manage environment variables; `--apply` restarts containers immediately |
 | `status` | `<subdomain>` | `--json` | Show consolidated app details and container status |
 | `stop` | `<subdomain>` | — | Pause an app's containers |
 | `start` | `<subdomain>` | — | Resume an app's containers |
@@ -75,15 +81,15 @@ vitrina status api
 # Store domain and email in the remote profile once
 vitrina remote set prod --host 1.2.3.5 --domain example.com --email me@example.com
 
-# If you're on macOS/Windows, cross-compile first
-GOOS=linux GOARCH=amd64 go build -o vitrina-linux .
-
-vitrina bootstrap prod --binary ./vitrina-linux
+vitrina bootstrap prod
+# → builds a Linux/amd64 binary from source (requires go in PATH)
 # → installs Docker (apt/yum auto-detected)
 # → installs Caddy via official package repo
 # → uploads vitrina binary to /usr/local/bin/vitrina
 # → runs vitrina init --domain example.com --email me@example.com
 ```
+
+On macOS/Windows, `bootstrap` automatically cross-compiles a `linux/amd64` binary from the nearest `go.mod` and uploads it. Pass `--binary ./vitrina-linux` to skip the auto-build and supply your own.
 
 The script is idempotent — safe to re-run if something fails partway through.
 

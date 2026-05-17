@@ -22,11 +22,15 @@ var redeployCmd = &cobra.Command{
 var (
 	redeployBranch string
 	redeployTag    string
+	redeployQuiet  bool
+	redeployForce  bool
 )
 
 func init() {
 	redeployCmd.Flags().StringVar(&redeployBranch, "branch", "", "Checkout this branch before rebuilding")
 	redeployCmd.Flags().StringVar(&redeployTag, "tag", "", "Checkout this tag before rebuilding")
+	redeployCmd.Flags().BoolVarP(&redeployQuiet, "quiet", "q", false, "Suppress build output; print a timing summary instead")
+	redeployCmd.Flags().BoolVar(&redeployForce, "force", false, "Sync via git fetch + reset --hard (handles force-pushed branches)")
 	rootCmd.AddCommand(redeployCmd)
 }
 
@@ -60,15 +64,32 @@ func runRedeploy(_ *cobra.Command, args []string) error {
 		if err := deploy.CheckoutTag(appDir, redeployTag); err != nil {
 			return fmt.Errorf("checkout tag failed: %w", err)
 		}
+	} else if redeployForce {
+		if err := deploy.ForcePull(appDir, redeployQuiet); err != nil {
+			return fmt.Errorf("force sync failed: %w", err)
+		}
 	} else {
 		fmt.Println("Pulling latest...")
-		if err := deploy.PullLatest(appDir); err != nil {
+		if err := deploy.PullLatest(appDir, redeployQuiet); err != nil {
 			return fmt.Errorf("git pull failed: %w", err)
 		}
 	}
 
+	if deploy.HasDockerCompose(appDir) {
+		fmt.Println("Found docker-compose.yml — using it, injecting PORT via .env")
+		if err := deploy.WriteEnvFile(appDir, app.Port); err != nil {
+			return fmt.Errorf("failed to write .env: %w", err)
+		}
+	} else {
+		pf, _ := deploy.ParseProcfile(appDir)
+		fmt.Println("Regenerating compose file...")
+		if err := deploy.WriteCompose(appDir, app.Subdomain, app.Port, pf); err != nil {
+			return fmt.Errorf("failed to regenerate compose: %w", err)
+		}
+	}
+
 	fmt.Println("Rebuilding containers...")
-	if err := deploy.ComposeUp(appDir); err != nil {
+	if err := deploy.ComposeUp(appDir, redeployQuiet); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)
 	}
 

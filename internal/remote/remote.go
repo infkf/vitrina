@@ -113,8 +113,13 @@ func Execute(name string, cmd *cobra.Command, args []string) error {
 
 	r.ApplyDefaults()
 
-	remoteArgs := filterRemoteArgs(cmd.Name())
-	remoteCmd := buildRemoteCommand(r, cmd.Name(), remoteArgs)
+	// Resolve the direct-child-of-root subcommand name.
+	// For top-level commands (deploy, list, etc.) this is cmd.Name().
+	// For nested commands (env set, env list) this is the parent (env).
+	topCmd := resolveTopLevelCmd(cmd)
+
+	remoteArgs := filterRemoteArgs(topCmd)
+	remoteCmd := buildRemoteCommand(r, topCmd, remoteArgs)
 
 	sshArgs := buildSSHArgs(r, remoteCmd)
 
@@ -179,6 +184,17 @@ func buildSCPArgs(r *Remote) []string {
 		args = append(args, "-i", idFile)
 	}
 	return args
+}
+
+// resolveTopLevelCmd walks up the cobra command tree to find the
+// direct child of root.  For nested commands like 'env set', this
+// returns "env" so the remote invocation packs the full subcommand
+// chain into arguments.
+func resolveTopLevelCmd(cmd *cobra.Command) string {
+	for cmd.Parent() != nil && cmd.Parent().Parent() != nil {
+		cmd = cmd.Parent()
+	}
+	return cmd.Name()
 }
 
 func filterRemoteArgs(subcommand string) []string {

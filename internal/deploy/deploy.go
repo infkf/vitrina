@@ -3,27 +3,86 @@ package deploy
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
-// CloneRepo clones repoURL into dir.
-func CloneRepo(repoURL, dir string) error {
-	cmd := exec.Command("git", "clone", repoURL, dir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+// CloneRepo clones repoURL into dir. When quiet, git progress is suppressed.
+func CloneRepo(repoURL, dir string, quiet bool) error {
+	args := []string{"clone"}
+	if quiet {
+		args = append(args, "--quiet")
+	}
+	args = append(args, repoURL, dir)
+	cmd := exec.Command("git", args...)
+	if !quiet {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
 	return cmd.Run()
 }
 
-// PullLatest runs git pull in dir.
-func PullLatest(dir string) error {
+// PullLatest runs git pull in dir. On divergence (force-pushed branch) it
+// automatically falls back to git fetch + reset --hard origin/<branch>.
+func PullLatest(dir string, quiet bool) error {
+	var stderrBuf strings.Builder
 	cmd := exec.Command("git", "-C", dir, "pull")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if quiet {
+		cmd.Stderr = &stderrBuf
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+	}
+	if err := cmd.Run(); err != nil {
+		errStr := stderrBuf.String()
+		if strings.Contains(errStr, "diverged") || strings.Contains(errStr, "divergent") ||
+			strings.Contains(errStr, "untracked") || strings.Contains(errStr, "overwritten") ||
+			strings.Contains(errStr, "local changes") || strings.Contains(errStr, "merge") {
+			return forcePull(dir, quiet)
+		}
+		return err
+	}
+	return nil
+}
+
+// ForcePull syncs dir to the remote HEAD without requiring a clean history
+// (git fetch + reset --hard). Use for force-pushed branches.
+func ForcePull(dir string, quiet bool) error {
+	if !quiet {
+		fmt.Println("Force-syncing to remote (fetch + reset --hard)...")
+	}
+	return forcePull(dir, quiet)
+}
+
+func forcePull(dir string, quiet bool) error {
+	fetch := exec.Command("git", "-C", dir, "fetch", "origin")
+	if !quiet {
+		fetch.Stdout = os.Stdout
+		fetch.Stderr = os.Stderr
+	}
+	if err := fetch.Run(); err != nil {
+		return fmt.Errorf("git fetch failed: %w", err)
+	}
+	branch := currentBranch(dir)
+	reset := exec.Command("git", "-C", dir, "reset", "--hard", "origin/"+branch)
+	if !quiet {
+		reset.Stdout = os.Stdout
+		reset.Stderr = os.Stderr
+	}
+	return reset.Run()
+}
+
+func currentBranch(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return "main"
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // CheckoutBranch checks out branch in dir.
@@ -227,6 +286,7 @@ func WriteCompose(dir, subdomain string, port int, pf Procfile) error {
 		b.WriteString("    build: .\n")
 		b.WriteString("    restart: unless-stopped\n")
 		fmt.Fprintf(&b, "    environment:\n      - PORT=%d\n", port)
+		b.WriteString("    env_file: .env\n")
 		fmt.Fprintf(&b, "    ports:\n      - \"127.0.0.1:%d:%d\"\n", port, port)
 		return os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte(b.String()), 0644)
 	}
@@ -237,6 +297,7 @@ func WriteCompose(dir, subdomain string, port int, pf Procfile) error {
 		b.WriteString("    build: .\n")
 		b.WriteString("    restart: \"no\"\n")
 		fmt.Fprintf(&b, "    command: [\"/bin/sh\", \"-c\", %q]\n", cmd)
+		b.WriteString("    env_file: .env\n")
 	}
 
 	// web: the only process exposed via Caddy
@@ -246,6 +307,7 @@ func WriteCompose(dir, subdomain string, port int, pf Procfile) error {
 		b.WriteString("    restart: unless-stopped\n")
 		fmt.Fprintf(&b, "    command: [\"/bin/sh\", \"-c\", %q]\n", webCmd)
 		fmt.Fprintf(&b, "    environment:\n      - PORT=%d\n", port)
+		b.WriteString("    env_file: .env\n")
 		fmt.Fprintf(&b, "    ports:\n      - \"127.0.0.1:%d:%d\"\n", port, port)
 		if _, hasRelease := pf["release"]; hasRelease {
 			fmt.Fprintf(&b, "    depends_on:\n      %s-release:\n        condition: service_completed_successfully\n", subdomain)
@@ -266,18 +328,53 @@ func WriteCompose(dir, subdomain string, port int, pf Procfile) error {
 		b.WriteString("    build: .\n")
 		b.WriteString("    restart: unless-stopped\n")
 		fmt.Fprintf(&b, "    command: [\"/bin/sh\", \"-c\", %q]\n", pf[proc])
+		b.WriteString("    env_file: .env\n")
 	}
 
 	return os.WriteFile(filepath.Join(dir, "docker-compose.yml"), []byte(b.String()), 0644)
 }
 
 // ComposeUp runs docker compose up -d --build in dir.
-func ComposeUp(dir string) error {
+// When quiet, output is suppressed and a timing summary is printed instead.
+// On failure in quiet mode, captured output is shown to aid debugging.
+func ComposeUp(dir string, quiet bool) error {
 	cmd := exec.Command("docker", "compose", "up", "-d", "--build")
 	cmd.Dir = dir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if !quiet {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+	start := time.Now()
+	var buf strings.Builder
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Run(); err != nil {
+		fmt.Print(buf.String())
+		return err
+	}
+	fmt.Printf("Built and started (%.0fs)\n", time.Since(start).Seconds())
+	return nil
+}
+
+// ComposeRestart runs docker compose up -d (without --build) to apply
+// configuration changes such as updated env vars without rebuilding images.
+func ComposeRestart(dir string, quiet bool) error {
+	cmd := exec.Command("docker", "compose", "up", "-d")
+	cmd.Dir = dir
+	if !quiet {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+	var buf strings.Builder
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Run(); err != nil {
+		fmt.Print(buf.String())
+		return err
+	}
+	return nil
 }
 
 // ComposeLogs streams docker compose logs in dir.

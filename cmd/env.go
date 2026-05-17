@@ -43,7 +43,11 @@ var envUnsetCmd = &cobra.Command{
 	RunE:  runRemoteOrLocal(runEnvUnset),
 }
 
+var envApply bool
+
 func init() {
+	envSetCmd.Flags().BoolVar(&envApply, "apply", false, "Restart containers after setting vars to apply changes immediately")
+	envUnsetCmd.Flags().BoolVar(&envApply, "apply", false, "Restart containers after unsetting vars to apply changes immediately")
 	envCmd.AddCommand(envListCmd)
 	envCmd.AddCommand(envSetCmd)
 	envCmd.AddCommand(envUnsetCmd)
@@ -144,7 +148,15 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Warning: failed to update app metadata: %v\n", err)
 	}
 
-	fmt.Printf("Environment variables set. Run 'vitrina redeploy %s' to apply changes.\n", subdomain)
+	if envApply {
+		fmt.Println("Restarting containers to apply changes...")
+		if err := deploy.ComposeRestart(appDir, false); err != nil {
+			return fmt.Errorf("restart failed: %w", err)
+		}
+		fmt.Printf("Environment variables set and applied to %s.\n", subdomain)
+	} else {
+		fmt.Printf("Environment variables set. Run 'vitrina redeploy %s' to apply changes.\n", subdomain)
+	}
 	return nil
 }
 
@@ -190,6 +202,14 @@ func runEnvUnset(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Warning: failed to update app metadata: %v\n", err)
 	}
 
-	fmt.Printf("Environment variables unset. Run 'vitrina redeploy %s' to apply changes.\n", subdomain)
+	if envApply {
+		fmt.Println("Restarting containers to apply changes...")
+		if err := deploy.ComposeRestart(appDir, false); err != nil {
+			return fmt.Errorf("restart failed: %w", err)
+		}
+		fmt.Printf("Environment variables unset and applied to %s.\n", subdomain)
+	} else {
+		fmt.Printf("Environment variables unset. Run 'vitrina redeploy %s' to apply changes.\n", subdomain)
+	}
 	return nil
 }
