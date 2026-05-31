@@ -2,6 +2,7 @@ package registry_test
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,12 +189,19 @@ func TestNextFreePort(t *testing.T) {
 func TestNextFreePortStartAt(t *testing.T) {
 	s := newStore(t)
 
-	port, err := s.NextFreePort(5000)
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatalf("failed to find free port: %v", err)
+	}
+	freePort := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	port, err := s.NextFreePort(freePort)
 	if err != nil {
 		t.Fatalf("NextFreePort failed: %v", err)
 	}
-	if port != 5000 {
-		t.Errorf("expected 5000, got %d", port)
+	if port != freePort {
+		t.Errorf("expected %d, got %d", freePort, port)
 	}
 }
 

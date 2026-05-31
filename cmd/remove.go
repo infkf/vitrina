@@ -7,6 +7,7 @@ import (
 
 	"vitrina/internal/caddy"
 	"vitrina/internal/config"
+	"vitrina/internal/deploy"
 	"vitrina/internal/registry"
 
 	"github.com/spf13/cobra"
@@ -76,6 +77,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	if removeClean {
+		tearDownContainers(cmd, cfg.AppsDir, subdomain)
 		cleanBoilerplate(cmd, cfg.AppsDir, subdomain)
 	}
 
@@ -88,5 +90,16 @@ func cleanBoilerplate(cmd *cobra.Command, appsDir, subdomain string) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to remove boilerplate dir %s: %v\n", dir, err)
 	} else {
 		fmt.Printf("Cleaned boilerplate: %s\n", dir)
+	}
+}
+
+func tearDownContainers(cmd *cobra.Command, appsDir, subdomain string) {
+	dir := filepath.Join(appsDir, subdomain)
+	if !deploy.HasDockerCompose(dir) {
+		return
+	}
+	fmt.Printf("Tearing down Docker containers for %s...\n", subdomain)
+	if err := deploy.ComposeCommand(dir, "down", "-v"); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to tear down containers for %s: %v\n", subdomain, err)
 	}
 }

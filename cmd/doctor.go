@@ -3,7 +3,10 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"vitrina/internal/caddy"
@@ -132,18 +135,15 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 				}
 			}
 		} else {
-			// Directory exists. Check Docker containers if scaffold is docker
-			if app.Scaffold == "docker" || app.Scaffold == "" {
-				appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
-				if deploy.HasDockerCompose(appDir) || deploy.HasDockerfile(appDir) {
-					if !deploy.ComposeIsRunning(appDir) {
-						issues = append(issues, fmt.Sprintf("Docker containers for %s are not running", app.Subdomain))
-						if healFlag {
-							if err := deploy.ComposeUp(appDir, false); err != nil {
-								fixes = append(fixes, fmt.Sprintf("Failed to start containers for %s: %v", app.Subdomain, err))
-							} else {
-								fixes = append(fixes, fmt.Sprintf("Started containers for %s", app.Subdomain))
-							}
+			appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
+			if deploy.HasDockerCompose(appDir) || deploy.HasDockerfile(appDir) {
+				if !deploy.ComposeIsRunning(appDir) {
+					issues = append(issues, fmt.Sprintf("Docker containers for %s are not running", app.Subdomain))
+					if healFlag {
+						if err := deploy.ComposeUp(appDir, false); err != nil {
+							fixes = append(fixes, fmt.Sprintf("Failed to start containers for %s: %v", app.Subdomain, err))
+						} else {
+							fixes = append(fixes, fmt.Sprintf("Started containers for %s", app.Subdomain))
 						}
 					}
 				}
@@ -156,6 +156,55 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		issues = append(issues, fmt.Sprintf("Dangling app directory found: %s", danglingDir))
 		if healFlag {
 			fixes = append(fixes, fmt.Sprintf("Skipped deleting dangling directory %s (safety precaution)", danglingDir))
+		}
+	}
+
+	// 3. Check for non-vitrina Docker containers using ports that overlap with
+	//    vitrina's managed ports (3000+), and detect orphaned containers whose
+	//    name matches the vitrina convention (<subdomain>-<service>-N) but whose
+	//    subdomain is no longer in the registry.
+	vitrinaPorts := make(map[int]string)
+	for _, app := range apps {
+		vitrinaPorts[app.Port] = app.Subdomain
+	}
+	externalPorts, _ := scanDockerPorts()
+	// Build a set of known vitrina container name prefixes so we don't flag
+	// containers we manage ourselves (e.g. "lemon-app-1" belongs to "lemon").
+	vitrinaPrefixes := make(map[string]bool)
+	for _, app := range apps {
+		vitrinaPrefixes[app.Subdomain+"-"] = true
+	}
+	vitrinaContainerRe := regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)-.+-\d+$`)
+	// Track subdomains we've already flagged as orphans to avoid duplicates.
+	orphanSubdomains := make(map[string]bool)
+	for hostPort, containerName := range externalPorts {
+		if hostPort < 3000 {
+			continue
+		}
+		// Check if this container belongs to a vitrina-managed app
+		isManaged := false
+		for prefix := range vitrinaPrefixes {
+			if strings.HasPrefix(containerName, prefix) {
+				isManaged = true
+				break
+			}
+		}
+		if isManaged {
+			continue
+		}
+		if sub, known := vitrinaPorts[hostPort]; known {
+			issues = append(issues, fmt.Sprintf("Port %d is used by both vitrina app %q and external container %q", hostPort, sub, containerName))
+			continue
+		}
+		// Check if this looks like an orphaned vitrina container
+		if m := vitrinaContainerRe.FindStringSubmatch(containerName); m != nil {
+			possibleSub := m[1]
+			if !orphanSubdomains[possibleSub] {
+				issues = append(issues, fmt.Sprintf("Container %q looks like an orphan from a removed vitrina app (possible subdomain: %q)", containerName, possibleSub))
+				orphanSubdomains[possibleSub] = true
+			}
+		} else {
+			issues = append(issues, fmt.Sprintf("External container %q exposes port %d (not managed by vitrina)", containerName, hostPort))
 		}
 	}
 
@@ -186,4 +235,41 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// scanDockerPorts runs "docker ps" and extracts published host port -> container
+// name mappings from all running containers.
+func scanDockerPorts() (map[int]string, error) {
+	out, err := exec.Command("docker", "ps", "--format", "{{.Names}}\t{{.Ports}}").Output()
+	if err != nil {
+		return nil, err
+	}
+	ports := make(map[int]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) < 2 {
+			continue
+		}
+		name := parts[0]
+		portPart := parts[1]
+		for _, mapping := range strings.Split(portPart, ",") {
+			mapping = strings.TrimSpace(mapping)
+			// Match patterns like "127.0.0.1:3001->3000/tcp" or "0.0.0.0:80->80/tcp"
+			before, _, ok := strings.Cut(mapping, "->")
+			if !ok {
+				continue
+			}
+			hostPortStr := before[strings.LastIndex(before, ":")+1:]
+			hostPort, err := strconv.Atoi(hostPortStr)
+			if err != nil {
+				continue
+			}
+			ports[hostPort] = name
+		}
+	}
+	return ports, nil
 }

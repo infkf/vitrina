@@ -3,6 +3,7 @@ package registry
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -150,8 +151,20 @@ func (s *Store) Get(subdomain string) (*App, error) {
 	return app, nil
 }
 
+// isPortInUse checks whether any process is listening on the given port
+// (on all interfaces). This catches non-vitrina services like manually
+// deployed Docker containers or system daemons.
+func isPortInUse(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return true
+	}
+	ln.Close()
+	return false
+}
+
 // NextFreePort returns the lowest available port >= startAt that is not
-// already assigned in the registry and is not 80 or 443.
+// already assigned in the registry, not bound on the host, and not 80/443.
 func (s *Store) NextFreePort(startAt int) (int, error) {
 	d, err := s.load()
 	if err != nil {
@@ -165,7 +178,7 @@ func (s *Store) NextFreePort(startAt int) (int, error) {
 		if p == 80 || p == 443 {
 			continue
 		}
-		if !used[p] {
+		if !used[p] && !isPortInUse(p) {
 			return p, nil
 		}
 	}

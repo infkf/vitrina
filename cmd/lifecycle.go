@@ -36,11 +36,11 @@ func buildLifecycleCmd(action string) *cobra.Command {
 				return err
 			}
 
-			if app.Scaffold != "docker" && app.Scaffold != "" {
+			appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
+			if !deploy.HasDockerCompose(appDir) && !deploy.HasDockerfile(appDir) {
 				return fmt.Errorf("lifecycle commands only support docker scaffold apps")
 			}
 
-			appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
 			fmt.Printf("Running docker compose %s for %s...\n", action, subdomain)
 			if err := deploy.ComposeCommand(appDir, action); err != nil {
 				return fmt.Errorf("failed to %s app: %w", action, err)

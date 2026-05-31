@@ -461,11 +461,11 @@ func handleLifecycleLocal(ctx context.Context, req mcpserver.CallToolRequest, ac
 		return toolError(err.Error())
 	}
 
-	if app.Scaffold != "docker" && app.Scaffold != "" {
+	appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
+	if !deploy.HasDockerCompose(appDir) && !deploy.HasDockerfile(appDir) {
 		return toolError("lifecycle commands only support docker scaffold apps")
 	}
 
-	appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
 	out, err := runCmdInDir(appDir, "docker", "compose", action)
 	if err != nil {
 		return toolError(fmt.Sprintf("failed to %s app: %v\n%s", action, err, out))
@@ -791,17 +791,15 @@ func handleDoctorLocal(ctx context.Context, req mcpserver.CallToolRequest) (*mcp
 				}
 			}
 		} else {
-			if app.Scaffold == "docker" || app.Scaffold == "" {
-				appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
-				if deploy.HasDockerCompose(appDir) || deploy.HasDockerfile(appDir) {
-					if !deploy.ComposeIsRunning(appDir) {
-						issues = append(issues, fmt.Sprintf("Containers not running for %s", app.Subdomain))
-						if heal {
-							if _, err := runCmdInDir(appDir, "docker", "compose", "up", "-d", "--build"); err != nil {
-								fixes = append(fixes, fmt.Sprintf("Failed to start containers for %s", app.Subdomain))
-							} else {
-								fixes = append(fixes, fmt.Sprintf("Started containers for %s", app.Subdomain))
-							}
+			appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
+			if deploy.HasDockerCompose(appDir) || deploy.HasDockerfile(appDir) {
+				if !deploy.ComposeIsRunning(appDir) {
+					issues = append(issues, fmt.Sprintf("Containers not running for %s", app.Subdomain))
+					if heal {
+						if _, err := runCmdInDir(appDir, "docker", "compose", "up", "-d", "--build"); err != nil {
+							fixes = append(fixes, fmt.Sprintf("Failed to start containers for %s", app.Subdomain))
+						} else {
+							fixes = append(fixes, fmt.Sprintf("Started containers for %s", app.Subdomain))
 						}
 					}
 				}
