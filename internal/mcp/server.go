@@ -214,6 +214,13 @@ func registerTools(s *server.MCPServer) {
 		),
 	), handleAppLogs)
 
+	s.AddTool(mcpserver.NewTool("logs_all",
+		mcpserver.WithDescription("Get recent container logs from all registered apps at once"),
+		mcpserver.WithString("tail",
+			mcpserver.Description("Number of recent lines to show from each app (e.g. '100')"),
+		),
+	), handleLogsAll)
+
 	s.AddTool(mcpserver.NewTool("ps_apps",
 		mcpserver.WithDescription("List running Docker containers for all registered apps"),
 	), handlePsApps)
@@ -239,6 +246,10 @@ func registerTools(s *server.MCPServer) {
 	s.AddTool(mcpserver.NewTool("reload",
 		mcpserver.WithDescription("Reload Caddy to apply config changes and retry TLS certificates"),
 	), handleReload)
+
+	s.AddTool(mcpserver.NewTool("monitor",
+		mcpserver.WithDescription("Run a one-off health check across all apps, checking TLS cert expiry, HTTPS status, and container liveness"),
+	), handleMonitor)
 }
 
 // --- Result helpers ---
@@ -485,6 +496,18 @@ func handleSetHealthPath(ctx context.Context, req mcpserver.CallToolRequest) (*m
 
 func handleReload(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	return runVitrina("reload")
+}
+
+func handleLogsAll(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
+	args := []string{"logs", "--all", "--follow=false"}
+	if tail, ok := getStringArg(req, "tail"); ok && tail != "" {
+		args = append(args, "--tail", tail)
+	}
+	return runVitrina(args...)
+}
+
+func handleMonitor(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
+	return runVitrina("monitor", "--once")
 }
 
 // --- Validation ---

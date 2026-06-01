@@ -5,6 +5,7 @@ import (
 
 	"vitrina/internal/caddy"
 	"vitrina/internal/config"
+	"vitrina/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -55,7 +56,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println("Vitrina initialized successfully.")
+	output.Success("Vitrina initialized successfully.")
 	fmt.Printf("  Config:       %s\n", config.Path())
 	fmt.Printf("  Caddyfile:    /etc/caddy/Caddyfile\n")
 	fmt.Printf("  App snippets: %s/\n\n", config.DefaultCaddyConfD)

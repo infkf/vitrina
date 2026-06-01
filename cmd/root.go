@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"vitrina/internal/output"
 	"vitrina/internal/remote"
 
 	"github.com/spf13/cobra"
@@ -37,7 +38,7 @@ func init() {
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		output.Error(err.Error())
 		os.Exit(1)
 	}
 }

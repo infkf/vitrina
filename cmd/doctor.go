@@ -12,6 +12,7 @@ import (
 	"vitrina/internal/caddy"
 	"vitrina/internal/config"
 	"vitrina/internal/deploy"
+	"vitrina/internal/output"
 	"vitrina/internal/registry"
 
 	"github.com/spf13/cobra"
@@ -62,7 +63,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	var issues []string
 	var fixes []string
 
-	fmt.Println("Running Vitrina checks...")
+	fmt.Println(output.Bold("Running Vitrina checks..."))
 
 	// 1. Check for dangling Caddy configs
 	caddyMap := make(map[string]bool)
@@ -150,9 +151,13 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 						}
 
 						if err := deploy.WriteEnvFile(appDir, app.Port); err == nil {
-							// Check if we need to write Procfile to Compose
-							pf, _ := deploy.ParseProcfile(appDir)
-							_ = deploy.WriteCompose(appDir, app.Subdomain, app.Port, pf)
+							if !deploy.HasDockerCompose(appDir) {
+								pf, _ := deploy.ParseProcfile(appDir)
+								if err := deploy.WriteCompose(appDir, app.Subdomain, app.Port, pf); err != nil {
+									fixes = append(fixes, fmt.Sprintf("Re-cloned but failed to generate compose for %s: %v", app.Subdomain, err))
+									continue
+								}
+							}
 							if err := deploy.ComposeUp(appDir, false); err == nil {
 								fixes = append(fixes, fmt.Sprintf("Re-cloned and deployed missing app directory for %s", app.Subdomain))
 							} else {
@@ -239,13 +244,13 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(issues) == 0 {
-		fmt.Println("✔ All checks passed. Ecosystem is healthy.")
+		output.Success("All checks passed. Ecosystem is healthy.")
 		return nil
 	}
 
-	fmt.Printf("\nFound %d issue(s):\n", len(issues))
+	fmt.Printf("\n"+output.Red("Found %d issue(s):")+"\n", len(issues))
 	for _, issue := range issues {
-		fmt.Printf("  - %s\n", issue)
+		fmt.Fprintln(os.Stderr, output.Red("  - "+issue))
 	}
 
 	if !healFlag {
@@ -255,13 +260,13 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("\nHealing Results:")
 	for _, fix := range fixes {
-		fmt.Printf("  - %s\n", fix)
+		fmt.Println("  - " + fix)
 	}
 
-	fmt.Println("Reloading Caddy to apply config changes...")
+	fmt.Println("\nReloading Caddy to apply config changes...")
 	_ = caddy.Validate()
 	if err := caddy.Reload(); err != nil {
-		fmt.Printf("Warning: failed to reload Caddy: %v\n", err)
+		output.Warnf("failed to reload Caddy: %v", err)
 	}
 
 	return nil

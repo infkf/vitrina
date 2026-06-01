@@ -23,6 +23,10 @@ vitrina -r prod redeploy api
 vitrina -r prod redeploy api --branch staging
 vitrina -r prod redeploy api --tag v1.2.3
 
+# Zero-downtime redeploy (blue/green swap)
+vitrina -r prod redeploy api -z
+vitrina -r prod redeploy api --branch staging -z
+
 # Force-sync after a force-push (also detected automatically on pull failure)
 vitrina -r prod redeploy api --force
 
@@ -35,6 +39,25 @@ vitrina -r prod push myapp .
 
 # Set environment variables securely
 vitrina -r prod env set myapp DATABASE_URL=postgres://...
+
+# Stream logs from all apps at once
+vitrina -r prod logs --all
+vitrina -r prod logs --all --tail 50
+
+# Public HTTPS health check (includes TLS cert status)
+vitrina -r prod list --public
+
+# Run a one-off health check
+vitrina -r prod monitor --once
+
+# Start background monitoring daemon (checks every 5 min by default)
+vitrina -r prod monitor
+vitrina -r prod monitor --interval 1h
+
+# Upgrade vitrina binaries
+vitrina upgrade                    # rebuild + replace local binary
+vitrina -r prod upgrade            # cross-compile + upload + replace remote
+vitrina -r prod upgrade --binary ./vitrina-linux  # skip build, use prebuilt
 vitrina -r prod env set myapp DATABASE_URL=postgres://... --apply  # restart immediately
 
 # Set a default remote so you never have to type -r prod again
@@ -54,23 +77,25 @@ vitrina status api
 | `bootstrap` | `<remote>` | `--domain`, `--email`, `--binary` | Install Docker, Caddy, and Vitrina on a fresh VPS; auto-builds Linux binary if `--binary` is omitted |
 | `init` | — | `-d`, `-e` | Initialize Vitrina on this server (called by bootstrap) |
 | `add` | `<subdomain> [port]` | `-s` (docker\|systemd\|none) | Register an app; auto-assigns port if omitted |
-| `deploy` | `<subdomain> <git-url>` | `--branch`, `--tag`, `-q/--quiet` | Clone, containerize, and route an app |
-| `redeploy` | `<subdomain>` | `--branch`, `--tag`, `-q/--quiet`, `--force` | Pull latest and rebuild containers; `--force` uses fetch + reset instead of pull |
+| `deploy` | `<subdomain> <git-url>` | `--branch`, `--tag`, `-q/--quiet`, `-z/--zero-downtime` | Clone, containerize, and route an app |
+| `redeploy` | `<subdomain>` | `--branch`, `--tag`, `-q/--quiet`, `--force`, `-z/--zero-downtime` | Pull latest and rebuild containers; `--force` uses fetch + reset instead of pull; `-z` performs blue/green swap |
 | `push` | `<subdomain> [local_dir]` | — | Package and deploy a local directory directly |
 | `env` | `list\|set\|unset <subdomain>` | `set/unset: --apply` | Manage environment variables; `--apply` restarts containers immediately |
 | `status` | `<subdomain>` | `--json` | Show consolidated app details and container status |
 | `stop` | `<subdomain>` | — | Pause an app's containers |
 | `start` | `<subdomain>` | — | Resume an app's containers |
 | `restart` | `<subdomain>` | — | Restart an app's containers |
-| `logs` | `<subdomain>` | `-f`, `--tail`, `--since` | Stream container logs; filter by service |
+| `logs` | `<subdomain> [service...]` | `-f`, `--tail`, `--since`, `-a/--all` | Stream container logs; `--all` streams from all apps simultaneously |
 | `ps` | — | `--json` | Show container status for all apps |
 | `remove` | `<subdomain>` | `-c` | Remove an app from the proxy |
-| `list` | — | `--health`, `--json` | Show all registered apps; `--health` does HTTP then TCP checks |
+| `list` | — | `--health`, `--public`, `--json` | Show all registered apps; `--health` checks localhost TCP/HTTP; `--public` checks HTTPS via public FQDN (includes TLS cert status) |
+| `monitor` | — | `-i/--interval`, `--once` | Background daemon checking TLS cert expiry, HTTPS health, and container status every 5 min (default); `--once` runs a single check |
 | `remote` | `set\|list\|show\|default\|remove` | | Manage remote VPS connections |
 | `doctor` | — | `--heal` | Diagnose and optionally heal ecosystem inconsistencies |
 | `config update` | — | `--domain`, `--email` | Update global configuration |
 | `export` | `[output.tar.gz]` | — | Export Vitrina state to a backup archive |
 | `import` | `<input.tar.gz>` | — | Restore state from a backup archive; runs `doctor --heal` |
+| `upgrade` | — | `--binary` | Upgrade the local or remote vitrina binary from source |
 | `mcp` | — | — | Start MCP server for AI agent integration |
 
 ## Bootstrap
@@ -223,9 +248,11 @@ Set `VITRINA_REMOTE` to a remote name to delegate all operations over SSH:
 | `env_set` | Set environment variables — restarts containers immediately |
 | `env_unset` | Unset environment variables — restarts containers immediately |
 | `app_logs` | Get container logs with optional tail/since/services filters |
+| `logs_all`  | Get recent logs from all apps at once |
 | `ps_apps` | List running containers for all apps |
 | `doctor` | Diagnose inconsistencies; optionally heal them |
 | `reload` | Reload Caddy to apply config changes and retry TLS certificates |
+| `monitor` | Run a one-off TLS/HTTPS/container health check across all apps |
 
 All mutating operations require root — configure MCP clients to run `vitrina mcp` via `sudo`.
 

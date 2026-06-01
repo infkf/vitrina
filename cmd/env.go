@@ -11,6 +11,7 @@ import (
 
 	"vitrina/internal/config"
 	"vitrina/internal/deploy"
+	"vitrina/internal/output"
 	"vitrina/internal/registry"
 
 	"github.com/spf13/cobra"
@@ -151,7 +152,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if err := store.Update(app); err != nil {
-		fmt.Printf("Warning: failed to update app metadata: %v\n", err)
+		output.Warnf("failed to update app metadata: %v", err)
 	}
 
 	if envApply {
@@ -205,7 +206,7 @@ func runEnvUnset(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if err := store.Update(app); err != nil {
-		fmt.Printf("Warning: failed to update app metadata: %v\n", err)
+		output.Warnf("failed to update app metadata: %v", err)
 	}
 
 	if envApply {

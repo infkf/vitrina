@@ -8,6 +8,7 @@ import (
 	"vitrina/internal/caddy"
 	"vitrina/internal/config"
 	"vitrina/internal/deploy"
+	"vitrina/internal/output"
 	"vitrina/internal/registry"
 
 	"github.com/spf13/cobra"
@@ -69,11 +70,9 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := caddy.Reload(); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(),
-			"Warning: app removed from config but Caddy reload failed:\n  %v\n"+
-				"Run 'caddy reload --config /etc/caddy/Caddyfile' manually.\n", err)
+		output.Warnf("app removed from config but Caddy reload failed: %v\nRun 'caddy reload --config /etc/caddy/Caddyfile' manually.", err)
 	} else {
-		fmt.Printf("Removed: %s (was routing to localhost:%d)\n", app.FQDN, app.Port)
+		output.Successf("Removed: %s (was routing to localhost:%d)", app.FQDN, app.Port)
 	}
 
 	if removeClean {
@@ -87,7 +86,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 func cleanBoilerplate(cmd *cobra.Command, appsDir, subdomain string) {
 	dir := filepath.Join(appsDir, subdomain)
 	if err := os.RemoveAll(dir); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to remove boilerplate dir %s: %v\n", dir, err)
+		output.Warnf("failed to remove boilerplate dir %s: %v", dir, err)
 	} else {
 		fmt.Printf("Cleaned boilerplate: %s\n", dir)
 	}
@@ -100,6 +99,6 @@ func tearDownContainers(cmd *cobra.Command, appsDir, subdomain string) {
 	}
 	fmt.Printf("Tearing down Docker containers for %s...\n", subdomain)
 	if err := deploy.ComposeCommand(dir, "down", "-v"); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to tear down containers for %s: %v\n", subdomain, err)
+		output.Warnf("failed to tear down containers for %s: %v", subdomain, err)
 	}
 }

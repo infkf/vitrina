@@ -158,6 +158,17 @@ func RunCommand(r *Remote, command string) error {
 	return cmd.Run()
 }
 
+// RunCommandCaptured is like RunCommand but returns combined stdout+stderr.
+func RunCommandCaptured(r *Remote, command string) (string, error) {
+	if r.UseSudo && r.User != "root" {
+		command = "sudo " + command
+	}
+	args := buildSSHArgs(r, command)
+	cmd := exec.Command("ssh", args...)
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
 // UploadFile copies localPath to remotePath on r via SCP.
 func UploadFile(r *Remote, localPath, remotePath string) error {
 	args := buildSCPArgs(r)

@@ -7,6 +7,7 @@ import (
 
 	"vitrina/internal/caddy"
 	"vitrina/internal/config"
+	"vitrina/internal/output"
 	"vitrina/internal/registry"
 	"vitrina/internal/scaffold"
 
@@ -96,18 +97,16 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := caddy.Reload(); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(),
-			"Warning: app registered but Caddy reload failed:\n  %v\n"+
-				"Run 'vitrina list' to verify, then reload Caddy manually.\n", err)
+		output.Warnf("app registered but Caddy reload failed: %v\nRun 'vitrina list' to verify, then reload Caddy manually.", err)
 		return nil
 	}
 
-	fmt.Printf("Registered: %s -> localhost:%d\n", fqdn, port)
+	output.Successf("Registered: %s -> localhost:%d", fqdn, port)
 
 	if addScaffoldType != "none" {
 		si := scaffold.AppInfo{Subdomain: subdomain, Port: port}
 		if err := scaffold.Generate(cfg.AppsDir, addScaffoldType, si); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: scaffold generation failed: %v\n", err)
+			output.Warnf("scaffold generation failed: %v", err)
 		}
 	}
 

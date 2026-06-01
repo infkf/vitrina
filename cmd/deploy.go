@@ -11,6 +11,7 @@ import (
 	"vitrina/internal/caddy"
 	"vitrina/internal/config"
 	"vitrina/internal/deploy"
+	"vitrina/internal/output"
 	"vitrina/internal/registry"
 
 	"github.com/spf13/cobra"
@@ -33,15 +34,17 @@ The app is reachable at https://<subdomain>.<domain> once containers start.`,
 }
 
 var (
-	deployBranch string
-	deployTag    string
-	deployQuiet  bool
+	deployBranch        string
+	deployTag           string
+	deployQuiet         bool
+	deployZeroDowntime  bool
 )
 
 func init() {
 	deployCmd.Flags().StringVar(&deployBranch, "branch", "", "Checkout this branch after cloning")
 	deployCmd.Flags().StringVar(&deployTag, "tag", "", "Checkout this tag after cloning")
 	deployCmd.Flags().BoolVarP(&deployQuiet, "quiet", "q", false, "Suppress build output; print a timing summary instead")
+	deployCmd.Flags().BoolVarP(&deployZeroDowntime, "zero-downtime", "z", false, "Deploy with zero-downtime blue/green swap")
 	rootCmd.AddCommand(deployCmd)
 }
 
@@ -78,10 +81,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	appDir := filepath.Join(cfg.AppsDir, subdomain)
 
-	fmt.Printf("Cloning %s...\n", repoURL)
+	cloneTimer := output.StartTimer(fmt.Sprintf("Cloning %s", repoURL))
 	if err := deploy.CloneRepo(repoURL, appDir, deployQuiet); err != nil {
 		return fmt.Errorf("clone failed: %w", err)
 	}
+	cloneTimer.Stop()
 
 	if deployBranch != "" {
 		fmt.Printf("Checking out branch %q...\n", deployBranch)
@@ -149,13 +153,25 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	if deployTag != "" {
 		app.GitRef = deployTag
 	}
+
+	if err := deploy.WriteVitrinaMarker(appDir, &deploy.VitrinaMarker{
+		Subdomain:  subdomain,
+		FQDN:       fqdn,
+		Port:       port,
+		DeployedBy: "deploy",
+		GitURL:     repoURL,
+		GitRef:     app.GitRef,
+	}); err != nil {
+		output.Warnf("failed to write .vitrina.json: %v", err)
+	}
+
 	if err := store.Add(app); err != nil {
 		caddy.RemoveAppConfig(cfg, fqdn)
 		os.RemoveAll(appDir)
 		return fmt.Errorf("registration failed — caddy config rolled back: %w", err)
 	}
 
-	fmt.Printf("Starting containers (port %d)...\n", port)
+	buildTimer := output.StartTimer("Starting containers")
 	if err := deploy.ComposeUp(appDir, deployQuiet); err != nil {
 		_ = deploy.ComposeCommand(appDir, "down", "-v")
 		store.Remove(subdomain)
@@ -163,14 +179,13 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		os.RemoveAll(appDir)
 		return fmt.Errorf("docker compose up failed — changes rolled back: %w", err)
 	}
+	buildTimer.Stop()
 
 	if err := caddy.Reload(); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(),
-			"Warning: app deployed but Caddy reload failed:\n  %v\n"+
-				"Run 'vitrina list' to verify, then reload Caddy manually.\n", err)
+		output.Warnf("app deployed but Caddy reload failed: %v\nRun 'vitrina list' to verify, then reload Caddy manually.", err)
 		return nil
 	}
 
-	fmt.Printf("Deployed: https://%s\n", fqdn)
+	output.Successf("Deployed: https://%s", fqdn)
 	return nil
 }

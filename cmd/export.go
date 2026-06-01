@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"vitrina/internal/config"
+	"vitrina/internal/output"
 	"vitrina/internal/remote"
 
 	"github.com/spf13/cobra"
@@ -151,10 +152,28 @@ func runLocalExport(outPath string) error {
 
 	fmt.Printf("Exporting Vitrina state locally to %s...\n", outPath)
 
-	_ = addFileToTar(config.Path(), "config.json")
-	_ = addFileToTar(filepath.Join(config.DefaultConfigDir, config.DefaultAppsFile), "apps.json")
-	_ = addDirToTar(cfg.CaddyConfDir, "caddy")
-	_ = addDirToTar(cfg.AppsDir, "apps")
+	var exportErr error
+	for _, pair := range []struct{ src, dst string }{
+		{config.Path(), "config.json"},
+		{filepath.Join(config.DefaultConfigDir, config.DefaultAppsFile), "apps.json"},
+	} {
+		if err := addFileToTar(pair.src, pair.dst); err != nil {
+			output.Warnf("failed to export %s: %v", pair.dst, err)
+			exportErr = err
+		}
+	}
+	for _, pair := range []struct{ src, dst string }{
+		{cfg.CaddyConfDir, "caddy"},
+		{cfg.AppsDir, "apps"},
+	} {
+		if err := addDirToTar(pair.src, pair.dst); err != nil {
+			output.Warnf("failed to export %s: %v", pair.dst, err)
+			exportErr = err
+		}
+	}
+	if exportErr != nil {
+		return fmt.Errorf("export completed with errors (archive may be incomplete)")
+	}
 
 	fmt.Println("Export complete.")
 	return nil

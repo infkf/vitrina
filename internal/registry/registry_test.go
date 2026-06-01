@@ -77,6 +77,37 @@ func TestAddPreservesCreatedAt(t *testing.T) {
 	}
 }
 
+func TestUpdate(t *testing.T) {
+	s := newStore(t)
+
+	_ = s.Add(&registry.App{Subdomain: "app1", FQDN: "app1.example.com", Port: 3000})
+	_ = s.Add(&registry.App{Subdomain: "app2", FQDN: "app2.example.com", Port: 3001})
+
+	app := &registry.App{Subdomain: "app1", FQDN: "app1.example.com", Port: 3000}
+	if err := s.Update(app); err != nil {
+		t.Fatalf("Update should succeed for same port: %v", err)
+	}
+
+	app2 := &registry.App{Subdomain: "app1", FQDN: "app1.example.com", Port: 4000}
+	if err := s.Update(app2); err != nil {
+		t.Fatalf("Update should succeed for non-conflicting port: %v", err)
+	}
+
+	app3 := &registry.App{Subdomain: "app1", FQDN: "app1.example.com", Port: 3001}
+	if err := s.Update(app3); err == nil {
+		t.Error("Update should reject port that collides with another app")
+	}
+
+	if err := s.Update(&registry.App{Subdomain: "nonexistent", Port: 5000}); err == nil {
+		t.Error("Update should reject nonexistent subdomain")
+	}
+
+	got, _ := s.Get("app1")
+	if got.Port != 4000 {
+		t.Errorf("app1 port should be 4000 after successful update, got %d", got.Port)
+	}
+}
+
 func TestRemove(t *testing.T) {
 	s := newStore(t)
 

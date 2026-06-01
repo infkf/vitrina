@@ -8,6 +8,7 @@ import (
 	"vitrina/internal/caddy"
 	"vitrina/internal/config"
 	"vitrina/internal/deploy"
+	"vitrina/internal/output"
 	"vitrina/internal/registry"
 
 	"github.com/spf13/cobra"
@@ -21,10 +22,11 @@ var redeployCmd = &cobra.Command{
 }
 
 var (
-	redeployBranch string
-	redeployTag    string
-	redeployQuiet  bool
-	redeployForce  bool
+	redeployBranch        string
+	redeployTag           string
+	redeployQuiet         bool
+	redeployForce         bool
+	redeployZeroDowntime  bool
 )
 
 func init() {
@@ -32,10 +34,11 @@ func init() {
 	redeployCmd.Flags().StringVar(&redeployTag, "tag", "", "Checkout this tag before rebuilding")
 	redeployCmd.Flags().BoolVarP(&redeployQuiet, "quiet", "q", false, "Suppress build output; print a timing summary instead")
 	redeployCmd.Flags().BoolVar(&redeployForce, "force", false, "Sync via git fetch + reset --hard (handles force-pushed branches)")
+	redeployCmd.Flags().BoolVarP(&redeployZeroDowntime, "zero-downtime", "z", false, "Deploy new containers on a separate port, swap Caddy, then tear down old")
 	rootCmd.AddCommand(redeployCmd)
 }
 
-func runRedeploy(_ *cobra.Command, args []string) error {
+func runRedeploy(cmd *cobra.Command, args []string) error {
 	if err := requireRoot(); err != nil {
 		return err
 	}
@@ -57,11 +60,17 @@ func runRedeploy(_ *cobra.Command, args []string) error {
 
 	if redeployBranch != "" {
 		fmt.Printf("Checking out branch %q...\n", redeployBranch)
+		if err := deploy.Fetch(appDir, redeployQuiet); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: git fetch failed: %v\n", err)
+		}
 		if err := deploy.CheckoutBranch(appDir, redeployBranch); err != nil {
 			return fmt.Errorf("checkout branch failed: %w", err)
 		}
 	} else if redeployTag != "" {
 		fmt.Printf("Checking out tag %q...\n", redeployTag)
+		if err := deploy.Fetch(appDir, redeployQuiet); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: git fetch failed: %v\n", err)
+		}
 		if err := deploy.CheckoutTag(appDir, redeployTag); err != nil {
 			return fmt.Errorf("checkout tag failed: %w", err)
 		}
@@ -70,10 +79,11 @@ func runRedeploy(_ *cobra.Command, args []string) error {
 			return fmt.Errorf("force sync failed: %w", err)
 		}
 	} else {
-		fmt.Println("Pulling latest...")
+		gitTimer := output.StartTimer("Pulling latest")
 		if err := deploy.PullLatest(appDir, app.GitRef, redeployQuiet); err != nil {
 			return fmt.Errorf("git pull failed: %w", err)
 		}
+		gitTimer.Stop()
 	}
 
 	if deploy.HasDockerCompose(appDir) {
@@ -82,20 +92,71 @@ func runRedeploy(_ *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to write .env: %w", err)
 		}
 	} else {
-		pf, _ := deploy.ParseProcfile(appDir)
+		pf, err := deploy.ParseProcfile(appDir)
+		if err != nil {
+			return fmt.Errorf("failed to read Procfile: %w", err)
+		}
 		fmt.Println("Regenerating compose file...")
 		if err := deploy.WriteCompose(appDir, app.Subdomain, app.Port, pf); err != nil {
 			return fmt.Errorf("failed to regenerate compose: %w", err)
 		}
 	}
 
-	fmt.Println("Rebuilding containers...")
+	if redeployZeroDowntime {
+		greenPort, err := store.NextFreePort(3000)
+		if err != nil {
+			return fmt.Errorf("failed to assign green port: %w", err)
+		}
+		if greenPort == app.Port {
+			greenPort, err = store.NextFreePort(app.Port + 1)
+			if err != nil {
+				return fmt.Errorf("failed to assign green port: %w", err)
+			}
+		}
+
+		newRef := app.GitRef
+		if redeployBranch != "" {
+			newRef = redeployBranch
+		} else if redeployTag != "" {
+			newRef = redeployTag
+		}
+
+		if err := deploy.BlueGreenDeploy(appDir, app.Subdomain, greenPort, app.Port, redeployQuiet, func() error {
+			if err := caddy.WriteAppConfig(cfg, app.FQDN, greenPort); err != nil {
+				return fmt.Errorf("caddy config write: %w", err)
+			}
+			if err := caddy.Validate(); err != nil {
+				caddy.WriteAppConfig(cfg, app.FQDN, app.Port)
+				return fmt.Errorf("caddy validation: %w", err)
+			}
+			if err := caddy.Reload(); err != nil {
+				caddy.WriteAppConfig(cfg, app.FQDN, app.Port)
+				return fmt.Errorf("caddy reload: %w", err)
+			}
+
+			app.Port = greenPort
+			app.LastDeployedAt = time.Now().UTC().Format(time.RFC3339)
+			app.GitRef = newRef
+			if err := store.Update(app); err != nil {
+				return fmt.Errorf("registry update: %w", err)
+			}
+			return nil
+		}); err != nil {
+			return fmt.Errorf("zero-downtime deploy failed: %w", err)
+		}
+
+		output.Successf("Redeployed (zero-downtime): https://%s (port %d)", app.FQDN, greenPort)
+		return nil
+	}
+
+	buildTimer := output.StartTimer("Rebuilding containers")
 	if err := deploy.ComposeUp(appDir, redeployQuiet); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)
 	}
+	buildTimer.Stop()
 
 	if err := caddy.Reload(); err != nil {
-		fmt.Printf("Warning: Caddy reload failed: %v\n", err)
+		output.Warnf("Caddy reload failed: %v", err)
 	}
 
 	app.LastDeployedAt = time.Now().UTC().Format(time.RFC3339)
@@ -105,9 +166,9 @@ func runRedeploy(_ *cobra.Command, args []string) error {
 		app.GitRef = redeployTag
 	}
 	if err := store.Update(app); err != nil {
-		fmt.Printf("Warning: failed to update app metadata: %v\n", err)
+		output.Warnf("failed to update app metadata: %v", err)
 	}
 
-	fmt.Printf("Redeployed: https://%s\n", app.FQDN)
+	output.Successf("Redeployed: https://%s", app.FQDN)
 	return nil
 }

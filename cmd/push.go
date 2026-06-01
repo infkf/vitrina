@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"vitrina/internal/config"
+	"vitrina/internal/deploy"
+	"vitrina/internal/output"
 	"vitrina/internal/registry"
 	"vitrina/internal/remote"
 
@@ -66,7 +68,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 	r.ApplyDefaults()
 
 	// 2. Package local directory
-	fmt.Printf("Packaging local directory %s...\n", absDir)
+	packTimer := output.StartTimer(fmt.Sprintf("Packaging local directory %s", absDir))
 	archivePath := filepath.Join(os.TempDir(), fmt.Sprintf("%s-push.tar.gz", subdomain))
 	defer os.Remove(archivePath)
 
@@ -77,13 +79,15 @@ func runPush(cmd *cobra.Command, args []string) error {
 	if err := tarCmd.Run(); err != nil {
 		return fmt.Errorf("failed to create archive: %w", err)
 	}
+	packTimer.Stop()
 
 	// 3. Upload archive
-	fmt.Printf("Uploading to %s...\n", name)
+	upTimer := output.StartTimer(fmt.Sprintf("Uploading to %s", name))
 	remoteArchivePath := fmt.Sprintf("/tmp/%s-push.tar.gz", subdomain)
 	if err := remote.UploadFile(r, archivePath, remoteArchivePath); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
+	upTimer.Stop()
 
 	// 4. Run extract and redeploy on remote
 	fmt.Println("Deploying on remote...")
@@ -93,8 +97,8 @@ if [ ! -d "/etc/vitrina/apps/%s" ]; then
 	echo "App %s is not deployed yet. Please use 'vitrina add %s' and optionally setup docker-compose.yml first."
 	exit 1
 fi
-# Clean up existing files except .env
-find /etc/vitrina/apps/%s -mindepth 1 -maxdepth 1 -not -name .env -exec rm -rf {} +
+# Clean up existing files except .env and .git
+find /etc/vitrina/apps/%s -mindepth 1 -maxdepth 1 -not -name .env -not -name .git -exec rm -rf {} +
 tar -xzf %s -C /etc/vitrina/apps/%s
 rm %s
 %s redeploy %s
@@ -126,7 +130,7 @@ func runLocalPush(subdomain, localDir string) error {
 	appDir := filepath.Join(sysCfg.AppsDir, subdomain)
 
 	fmt.Printf("Copying files to %s...\n", appDir)
-
+	copyTimer := output.StartTimer("Copying files")
 	archivePath := filepath.Join(os.TempDir(), fmt.Sprintf("%s-push.tar", subdomain))
 	defer os.Remove(archivePath)
 
@@ -140,10 +144,10 @@ func runLocalPush(subdomain, localDir string) error {
 		return err
 	}
 
-	// Clean up existing files except .env
+	// Clean up existing files except .env and .git
 	if entries, err := os.ReadDir(appDir); err == nil {
 		for _, entry := range entries {
-			if entry.Name() != ".env" {
+			if entry.Name() != ".env" && entry.Name() != ".git" {
 				_ = os.RemoveAll(filepath.Join(appDir, entry.Name()))
 			}
 		}
@@ -153,8 +157,20 @@ func runLocalPush(subdomain, localDir string) error {
 	if err := extractCmd.Run(); err != nil {
 		return fmt.Errorf("failed to extract local archive: %w", err)
 	}
+	copyTimer.Stop()
 
 	fmt.Println("Deploying...")
+
+	if err := deploy.WriteVitrinaMarker(appDir, &deploy.VitrinaMarker{
+		Subdomain:  subdomain,
+		FQDN:       app.FQDN,
+		Port:       app.Port,
+		DeployedBy: "push",
+		GitURL:     app.GitURL,
+		GitRef:     app.GitRef,
+	}); err != nil {
+		output.Warnf("failed to write .vitrina.json: %v", err)
+	}
 
 	cmdStr := os.Args[0]
 	if !strings.HasSuffix(cmdStr, "vitrina") {
@@ -172,7 +188,7 @@ func buildTarArgs(archivePath, localDir string, compress bool) []string {
 	if compress {
 		flag = "-czf"
 	}
-	args := []string{flag, archivePath, "--exclude=.git", "--exclude=.env"}
+	args := []string{flag, archivePath, "--exclude=.git", "--exclude=.env", "--exclude=.vitrina.json"}
 
 	ignoreFile := filepath.Join(localDir, ".vitrinaignore")
 	if _, err := os.Stat(ignoreFile); err == nil {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"vitrina/internal/output"
 	"vitrina/internal/remote"
 
 	"github.com/spf13/cobra"
@@ -203,7 +204,7 @@ func runBootstrap(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("vitrina init failed: %w", err)
 	}
 
-	fmt.Printf("\nBootstrap complete. Deploy your first app with:\n")
+	output.Success("Bootstrap complete. Deploy your first app with:")
 	fmt.Printf("  vitrina -r %s deploy <subdomain> <git-url>\n", remoteName)
 	return nil
 }
@@ -238,7 +239,7 @@ func autoBuildLinuxBinary(remoteName string) (string, error) {
 	}
 	tmp.Close()
 
-	fmt.Println("==> Building Linux binary...")
+	timer := output.StartTimer("==> Building Linux binary...")
 	build := exec.Command("go", "build", "-o", tmp.Name(), ".")
 	build.Dir = srcDir
 	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64")
@@ -248,6 +249,7 @@ func autoBuildLinuxBinary(remoteName string) (string, error) {
 		os.Remove(tmp.Name())
 		return "", fmt.Errorf("auto-build failed: %w", err)
 	}
+	timer.Stop()
 	return tmp.Name(), nil
 }
 

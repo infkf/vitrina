@@ -118,6 +118,12 @@ func (s *Store) Update(app *App) error {
 		return fmt.Errorf("subdomain %q is not registered in vitrina", app.Subdomain)
 	}
 
+	for _, a := range d.Apps {
+		if a.Subdomain != app.Subdomain && a.Port == app.Port {
+			return fmt.Errorf("port %d is already assigned to subdomain %q", app.Port, a.Subdomain)
+		}
+	}
+
 	d.Apps[app.Subdomain] = app
 	return s.save(d)
 }

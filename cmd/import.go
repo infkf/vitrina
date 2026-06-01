@@ -125,9 +125,15 @@ func runLocalImport(inPath string) error {
 		} else if strings.HasPrefix(header.Name, "caddy/") {
 			rel := header.Name[len("caddy/"):]
 			destPath = filepath.Join(cfg.CaddyConfDir, rel)
+			if !isSubPath(cfg.CaddyConfDir, destPath) {
+				continue
+			}
 		} else if strings.HasPrefix(header.Name, "apps/") {
 			rel := header.Name[len("apps/"):]
 			destPath = filepath.Join(cfg.AppsDir, rel)
+			if !isSubPath(cfg.AppsDir, destPath) {
+				continue
+			}
 		} else {
 			continue
 		}
@@ -163,7 +169,15 @@ func runLocalImport(inPath string) error {
 	healCmd := exec.Command(cmdStr, "doctor", "--heal")
 	healCmd.Stdout = os.Stdout
 	healCmd.Stderr = os.Stderr
-	_ = healCmd.Run()
+	if err := healCmd.Run(); err != nil {
+		return fmt.Errorf("import succeeded but doctor --heal failed (system may be in an inconsistent state): %w", err)
+	}
 
 	return nil
+}
+
+func isSubPath(base, target string) bool {
+	cleanBase := filepath.Clean(base) + string(filepath.Separator)
+	cleanTarget := filepath.Clean(target)
+	return strings.HasPrefix(cleanTarget, cleanBase)
 }
