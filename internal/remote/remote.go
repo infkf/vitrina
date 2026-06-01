@@ -265,7 +265,11 @@ func buildSSHArgs(r *Remote, remoteCmd string) []string {
 
 // DownloadFile uses scp to download a remote file to a local path.
 func DownloadFile(r *Remote, remotePath, localPath string) error {
-	args := []string{}
+	args := []string{
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "PasswordAuthentication=no",
+		"-o", "ConnectTimeout=10",
+	}
 	if r.IdentityFile != "" {
 		idFile := r.IdentityFile
 		if strings.HasPrefix(idFile, "~/") {

@@ -28,35 +28,29 @@ func NewServer() *server.MCPServer {
 	return s
 }
 
-// isRemote returns true when VITRINA_REMOTE is set, meaning all operations
-// should be delegated to the remote VPS via SSH.
 func isRemote() bool {
 	return remoteName != ""
 }
 
-// remoteExec runs a vitrina CLI command on the remote VPS and returns its output.
-// It uses the same -r flag that the CLI uses, so SSH config, keys, and sudo
-// handling all work identically to manual CLI usage.
-func remoteExec(args ...string) (string, error) {
-	fullArgs := append([]string{"-r", remoteName, "--json"}, args...)
-	cmd := exec.Command("vitrina", fullArgs...)
+func runVitrina(args ...string) (*mcpserver.CallToolResult, error) {
+	if isRemote() {
+		args = append([]string{"-r", remoteName}, args...)
+	}
+	cmd := exec.Command("vitrina", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("vitrina %s failed: %w\n%s", strings.Join(args, " "), err, string(out))
+		return toolError(fmt.Sprintf("vitrina %s: %v\n%s", strings.Join(args, " "), err, string(out)))
 	}
-	return string(out), nil
+	return toolText(string(out))
 }
 
-// remoteExecNoJSON runs a vitrina CLI command on the remote without --json.
-// Used for commands that don't support JSON output.
-func remoteExecNoJSON(args ...string) (string, error) {
-	fullArgs := append([]string{"-r", remoteName}, args...)
-	cmd := exec.Command("vitrina", fullArgs...)
+func runVitrinaLocal(args ...string) (*mcpserver.CallToolResult, error) {
+	cmd := exec.Command("vitrina", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("vitrina %s failed: %w\n%s", strings.Join(args, " "), err, string(out))
+		return toolError(fmt.Sprintf("vitrina %s: %v\n%s", strings.Join(args, " "), err, string(out)))
 	}
-	return string(out), nil
+	return toolText(string(out))
 }
 
 func registerTools(s *server.MCPServer) {
@@ -136,6 +130,17 @@ func registerTools(s *server.MCPServer) {
 		),
 	), handleRemoveApp)
 
+	s.AddTool(mcpserver.NewTool("push_app",
+		mcpserver.WithDescription("Package a local directory and deploy it to the server without requiring git push"),
+		mcpserver.WithString("subdomain",
+			mcpserver.Required(),
+			mcpserver.Description("Subdomain of the app to push to"),
+		),
+		mcpserver.WithString("dir",
+			mcpserver.Description("Local directory to push (defaults to current directory)"),
+		),
+	), handlePushApp)
+
 	s.AddTool(mcpserver.NewTool("stop_app",
 		mcpserver.WithDescription("Stop an app's Docker containers without removing them"),
 		mcpserver.WithString("subdomain",
@@ -169,7 +174,7 @@ func registerTools(s *server.MCPServer) {
 	), handleEnvList)
 
 	s.AddTool(mcpserver.NewTool("env_set",
-		mcpserver.WithDescription("Set environment variables for an app. Run redeploy after to apply changes."),
+		mcpserver.WithDescription("Set environment variables for an app. Containers are restarted immediately to apply changes."),
 		mcpserver.WithString("subdomain",
 			mcpserver.Required(),
 			mcpserver.Description("Subdomain of the app"),
@@ -181,7 +186,7 @@ func registerTools(s *server.MCPServer) {
 	), handleEnvSet)
 
 	s.AddTool(mcpserver.NewTool("env_unset",
-		mcpserver.WithDescription("Unset environment variables for an app. Run redeploy after to apply changes."),
+		mcpserver.WithDescription("Unset environment variables for an app. Containers are restarted immediately to apply changes."),
 		mcpserver.WithString("subdomain",
 			mcpserver.Required(),
 			mcpserver.Description("Subdomain of the app"),
@@ -230,6 +235,10 @@ func registerTools(s *server.MCPServer) {
 			mcpserver.Description("HTTP path for health checks (e.g. '/health'). Omit or set to empty to clear and reset to default '/'."),
 		),
 	), handleSetHealthPath)
+
+	s.AddTool(mcpserver.NewTool("reload",
+		mcpserver.WithDescription("Reload Caddy to apply config changes and retry TLS certificates"),
+	), handleReload)
 }
 
 // --- Result helpers ---
@@ -326,270 +335,162 @@ func getSliceArg(req mcpserver.CallToolRequest, name string) ([]any, bool) {
 }
 
 // --- Tool Handlers ---
-// When VITRINA_REMOTE is set, all handlers delegate to the CLI over SSH.
-// Otherwise, they call internal packages directly (requires root on the local machine).
 
 func handleListApps(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
-	if isRemote() {
-		args := []string{"list"}
-		if health, ok := getBoolArg(req, "health"); ok && health {
-			args = append(args, "--health")
-		}
-		out, err := remoteExec(args...)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
+	args := []string{"list", "--json"}
+	if health, ok := getBoolArg(req, "health"); ok && health {
+		args = append(args, "--health")
 	}
-	return handleListAppsLocal(ctx, req)
+	return runVitrina(args...)
 }
 
 func handleGetApp(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	subdomain, _ := getStringArg(req, "subdomain")
-	if isRemote() {
-		out, err := remoteExec("status", subdomain)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
-	}
-	return handleGetAppLocal(ctx, req)
+	return runVitrina("status", subdomain, "--json")
 }
 
 func handleAddApp(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	subdomain, _ := getStringArg(req, "subdomain")
-	if isRemote() {
-		args := []string{"add", subdomain}
-		if port, ok := getNumberArg(req, "port"); ok {
-			args = append(args, fmt.Sprintf("%d", port))
-		}
-		if scaffold, ok := getStringArg(req, "scaffold"); ok && scaffold != "" {
-			args = append(args, "-s", scaffold)
-		}
-		out, err := remoteExecNoJSON(args...)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
+	args := []string{"add", subdomain}
+	if port, ok := getNumberArg(req, "port"); ok {
+		args = append(args, fmt.Sprintf("%d", port))
 	}
-	return handleAddAppLocal(ctx, req)
+	if scaffold, ok := getStringArg(req, "scaffold"); ok && scaffold != "" {
+		args = append(args, "-s", scaffold)
+	}
+	return runVitrina(args...)
 }
 
 func handleDeployApp(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	subdomain, _ := getStringArg(req, "subdomain")
 	gitURL, _ := getStringArg(req, "git_url")
-	if isRemote() {
-		args := []string{"deploy", subdomain, gitURL}
-		if branch, ok := getStringArg(req, "branch"); ok && branch != "" {
-			args = append(args, "--branch", branch)
-		}
-		if tag, ok := getStringArg(req, "tag"); ok && tag != "" {
-			args = append(args, "--tag", tag)
-		}
-		out, err := remoteExecNoJSON(args...)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
+	args := []string{"deploy", subdomain, gitURL, "-q"}
+	if branch, ok := getStringArg(req, "branch"); ok && branch != "" {
+		args = append(args, "--branch", branch)
 	}
-	return handleDeployAppLocal(ctx, req)
+	if tag, ok := getStringArg(req, "tag"); ok && tag != "" {
+		args = append(args, "--tag", tag)
+	}
+	return runVitrina(args...)
 }
 
 func handleRedeployApp(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	subdomain, _ := getStringArg(req, "subdomain")
-	if isRemote() {
-		args := []string{"redeploy", subdomain}
-		if branch, ok := getStringArg(req, "branch"); ok && branch != "" {
-			args = append(args, "--branch", branch)
-		}
-		if tag, ok := getStringArg(req, "tag"); ok && tag != "" {
-			args = append(args, "--tag", tag)
-		}
-		if force, ok := getBoolArg(req, "force"); ok && force {
-			args = append(args, "--force")
-		}
-		out, err := remoteExecNoJSON(args...)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
+	args := []string{"redeploy", subdomain, "-q"}
+	if branch, ok := getStringArg(req, "branch"); ok && branch != "" {
+		args = append(args, "--branch", branch)
 	}
-	return handleRedeployAppLocal(ctx, req)
+	if tag, ok := getStringArg(req, "tag"); ok && tag != "" {
+		args = append(args, "--tag", tag)
+	}
+	if force, ok := getBoolArg(req, "force"); ok && force {
+		args = append(args, "--force")
+	}
+	return runVitrina(args...)
 }
 
 func handleRemoveApp(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	subdomain, _ := getStringArg(req, "subdomain")
-	if isRemote() {
-		args := []string{"remove", subdomain}
-		if clean, ok := getBoolArg(req, "clean"); ok && clean {
-			args = append(args, "-c")
-		}
-		out, err := remoteExecNoJSON(args...)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
+	args := []string{"remove", subdomain}
+	if clean, ok := getBoolArg(req, "clean"); ok && clean {
+		args = append(args, "-c")
 	}
-	return handleRemoveAppLocal(ctx, req)
+	return runVitrina(args...)
+}
+
+func handlePushApp(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
+	subdomain, _ := getStringArg(req, "subdomain")
+	args := []string{"push", subdomain}
+	if dir, ok := getStringArg(req, "dir"); ok && dir != "" {
+		args = append(args, dir)
+	}
+	return runVitrinaLocal(args...)
 }
 
 func handleLifecycle(action string) func(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	return func(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 		subdomain, _ := getStringArg(req, "subdomain")
-		if isRemote() {
-			out, err := remoteExecNoJSON(action, subdomain)
-			if err != nil {
-				return toolError(err.Error())
-			}
-			return toolText(out)
-		}
-		return handleLifecycleLocal(ctx, req, action)
+		return runVitrina(action, subdomain)
 	}
 }
 
 func handleEnvList(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	subdomain, _ := getStringArg(req, "subdomain")
-	if isRemote() {
-		out, err := remoteExec("env", "list", subdomain)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
-	}
-	return handleEnvListLocal(ctx, req)
+	return runVitrina("env", "list", subdomain, "--json")
 }
 
 func handleEnvSet(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	subdomain, _ := getStringArg(req, "subdomain")
 	varsRaw, _ := getMapArg(req, "vars")
-	if isRemote() {
-		args := []string{"env", "set", subdomain}
-		for k, v := range varsRaw {
-			args = append(args, fmt.Sprintf("%s=%v", k, v))
-		}
-		out, err := remoteExecNoJSON(args...)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
+	args := []string{"env", "set", subdomain}
+	for k, v := range varsRaw {
+		args = append(args, fmt.Sprintf("%s=%v", k, v))
 	}
-	return handleEnvSetLocal(ctx, req)
+	args = append(args, "--apply")
+	return runVitrina(args...)
 }
 
 func handleEnvUnset(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	subdomain, _ := getStringArg(req, "subdomain")
 	keysRaw, _ := getSliceArg(req, "keys")
-	if isRemote() {
-		args := []string{"env", "unset", subdomain}
-		for _, k := range keysRaw {
-			if s, ok := k.(string); ok {
-				args = append(args, s)
-			}
+	args := []string{"env", "unset", subdomain}
+	for _, k := range keysRaw {
+		if s, ok := k.(string); ok {
+			args = append(args, s)
 		}
-		out, err := remoteExecNoJSON(args...)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
 	}
-	return handleEnvUnsetLocal(ctx, req)
+	args = append(args, "--apply")
+	return runVitrina(args...)
 }
 
 func handleAppLogs(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	subdomain, _ := getStringArg(req, "subdomain")
-	if isRemote() {
-		args := []string{"logs", subdomain, "--follow=false"}
-		if tail, ok := getStringArg(req, "tail"); ok && tail != "" {
-			args = append(args, "--tail", tail)
-		}
-		if since, ok := getStringArg(req, "since"); ok && since != "" {
-			args = append(args, "--since", since)
-		}
-		if services, ok := getSliceArg(req, "services"); ok {
-			for _, s := range services {
-				if svc, ok := s.(string); ok {
-					args = append(args, svc)
-				}
+	args := []string{"logs", subdomain, "--follow=false"}
+	if tail, ok := getStringArg(req, "tail"); ok && tail != "" {
+		args = append(args, "--tail", tail)
+	}
+	if since, ok := getStringArg(req, "since"); ok && since != "" {
+		args = append(args, "--since", since)
+	}
+	if services, ok := getSliceArg(req, "services"); ok {
+		for _, s := range services {
+			if svc, ok := s.(string); ok {
+				args = append(args, svc)
 			}
 		}
-		out, err := remoteExecNoJSON(args...)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
 	}
-	return handleAppLogsLocal(ctx, req)
+	return runVitrina(args...)
 }
 
 func handlePsApps(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
-	if isRemote() {
-		out, err := remoteExec("ps")
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
-	}
-	return handlePsAppsLocal(ctx, req)
+	return runVitrina("ps", "--json")
 }
 
 func handleDoctor(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
-	if isRemote() {
-		args := []string{"doctor"}
-		if heal, ok := getBoolArg(req, "heal"); ok && heal {
-			args = append(args, "--heal")
-		}
-		out, err := remoteExecNoJSON(args...)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
+	args := []string{"doctor"}
+	if heal, ok := getBoolArg(req, "heal"); ok && heal {
+		args = append(args, "--heal")
 	}
-	return handleDoctorLocal(ctx, req)
+	return runVitrina(args...)
 }
 
 func handleSetHealthPath(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
 	subdomain, _ := getStringArg(req, "subdomain")
-	if isRemote() {
-		path, _ := getStringArg(req, "path")
-		if path == "" {
-			out, err := remoteExecNoJSON("config", "health-path", subdomain, "--clear")
-			if err != nil {
-				return toolError(err.Error())
-			}
-			return toolText(out)
-		}
-		out, err := remoteExecNoJSON("config", "health-path", subdomain, path)
-		if err != nil {
-			return toolError(err.Error())
-		}
-		return toolText(out)
+	path, _ := getStringArg(req, "path")
+	if path == "" {
+		return runVitrina("config", "health-path", subdomain, "--clear")
 	}
-	return handleSetHealthPathLocal(ctx, req)
+	return runVitrina("config", "health-path", subdomain, path)
 }
 
-// --- Local implementations (require root + local /etc/vitrina) ---
+func handleReload(ctx context.Context, req mcpserver.CallToolRequest) (*mcpserver.CallToolResult, error) {
+	return runVitrina("reload")
+}
+
+// --- Validation ---
 
 var subdomainPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
 
 func isValidSubdomain(s string) bool {
 	return subdomainPattern.MatchString(s)
-}
-
-func runCmd(name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("%s failed: %w\n%s", name, err, string(out))
-	}
-	return string(out), nil
-}
-
-func runCmdInDir(dir, name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("%s failed: %w\n%s", name, err, string(out))
-	}
-	return string(out), nil
 }

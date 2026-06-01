@@ -31,7 +31,7 @@ cmd/            Cobra commands — user-facing logic, argument parsing
   remove.go     Deregister an app and remove its Caddy snippet
   list.go       Tabular view of registered apps; optional TCP health check
   deploy.go     Clone a git repo and wire it up end-to-end
-  redeploy.go   git pull (auto-recovers from force-push) + docker compose up --build; -q suppresses build output; --force uses fetch+reset
+  redeploy.go   git pull (auto-recovers from force-push) + docker compose up --build + caddy reload; -q suppresses build output; --force uses fetch+reset
   push.go       Deploy a local directory directly to a remote VPS
   env.go        Manage secure environment variables for an app
   lifecycle.go  Stop, start, and restart an app's containers
@@ -52,10 +52,70 @@ internal/
   scaffold/     Boilerplate generators: docker-compose.yml, systemd .service
   deploy/       Git helpers (CloneRepo, PullLatest with force-push recovery, ForcePull), Procfile parser, docker-compose generator, ComposeUp (quiet mode), ComposeRestart, ComposeIsRunning, env helpers
   remote/       SSH remote profile store; Execute, RunScript, RunCommand, UploadFile
-  mcp/          MCP server exposing Vitrina commands as tools for AI agents
+  mcp/          MCP server exposing Vitrina commands as tools for AI agents; all handlers shell out to the vitrina binary (no duplicated local logic)
 ```
 
 **Key principle:** One app = one `.caddy` snippet in `/etc/caddy/conf.d/`. A bad config for one app never breaks the proxy for others.
+
+## Agent Workflow — How to Deploy
+
+Use the MCP tools directly. Do NOT run `vitrina` CLI commands via bash — every MCP tool maps 1:1 to a CLI command with identical behavior.
+
+### Deploying code changes
+
+You have two paths. Pick one.
+
+**Path A: Push (for local changes, no git required)**
+```
+push_app <subdomain> <local_dir>
+```
+Packages the directory, uploads, extracts, and redeploys — one call. Use this when you've made changes to files locally and want to deploy them immediately without committing or pushing to git.
+
+**Path B: Git (for deployed repos)**
+```
+redeploy_app <subdomain>
+```
+Pulls latest from the repo and rebuilds containers. Use this when code is already committed and pushed to the remote git repository. App must have been deployed via `deploy_app` first.
+
+### Deploying a brand-new app
+```
+deploy_app <subdomain> <git_url> [--branch ...]
+```
+Clones the repo, detects Dockerfile/Procfile/docker-compose.yml, generates config, wires up Caddy, and starts containers. Automatically runs quiet mode — you get a timing summary, not build spam.
+
+### Setting environment variables
+```
+env_set <subdomain> {"KEY": "value", ...}
+```
+Writes to `.env` AND **restarts containers immediately** (equivalent to CLI `--apply`). Do NOT chain `env_set` + `redeploy_app` — the restart happens automatically. Same for `env_unset`.
+
+### Removing an app
+```
+remove_app <subdomain> [clean: true]
+```
+Removes Caddy snippet and registry entry. With `clean: true`, also runs `docker compose down -v` and deletes the app directory. No orphaned containers or port conflicts.
+
+### Diagnosing issues
+```
+doctor [heal: true]
+```
+Cross-references registry, Caddy configs, app directories, and Docker containers. With `heal: true`, auto-fixes missing configs, re-clones missing repos, restarts stopped containers.
+
+### Common antipatterns — do NOT do these
+
+- **DO NOT** run `vitrina deploy ...` or `vitrina redeploy ...` via bash. Use the MCP tools.
+- **DO NOT** SSH into the VPS and manually write files. Use `push_app`.
+- **DO NOT** call `env_set` then `redeploy_app` to apply. `env_set` already restarts containers.
+- **DO NOT** manually edit Caddy configs. Use `add_app`/`remove_app`/`deploy_app`.
+- **DO NOT** chain `git add/commit/push` then `redeploy_app` if you already have `push_app` available. `push_app` deploys local changes directly without touching git.
+
+### Verifying deployment
+```
+list_apps [health: true]    — are apps routing and healthy?
+get_app <subdomain>          — detailed status, git info, containers
+ps_apps                      — which containers are running?
+app_logs <subdomain>         — check for errors
+```
 
 ## Filesystem Layout (production)
 
@@ -77,7 +137,7 @@ internal/
 | `remove` | `<subdomain>` | `-c/--clean` | Removes snippet + registry entry |
 | `list` | — | `--health` (TCP dial check) | Tabwriter-formatted table |
 | `deploy` | `<subdomain> <git-url>` | `--branch`, `--tag`, `-q/--quiet` | Clone → compose → Caddy → up; `-q` suppresses build output, prints timing summary |
-| `redeploy` | `<subdomain>` | `--branch`, `--tag`, `-q/--quiet`, `--force` | Pull/checkout → docker compose up --build; `--force` uses fetch+reset (also auto-triggered on divergence) |
+| `redeploy` | `<subdomain>` | `--branch`, `--tag`, `-q/--quiet`, `--force` | Pull/checkout → docker compose up --build → caddy reload; `--force` uses fetch+reset (also auto-triggered on divergence) |
 | `push` | `<subdomain> [local_dir]` | — | Package and deploy a local directory directly |
 | `env` | `list\|set\|unset <subdomain>` | `set/unset: --apply` | Manage secure environment variables; `--apply` calls `ComposeRestart` immediately after |
 | `status` | `<subdomain>` | `--json` | Show consolidated app metadata and container state |
@@ -120,6 +180,8 @@ The registry `App` struct tracks deployment metadata beyond the basics:
 
 `vitrina mcp` starts a Model Context Protocol server over stdio for AI agent integration. It exposes Vitrina operations as tools callable by MCP clients (Claude, Cursor, opencode, etc.).
 
+**All handlers — both local and remote — shell out to the `vitrina` binary.** When running locally, tool calls run `vitrina <command>` directly. When `VITRINA_REMOTE` is set, they run `vitrina -r <remote> <command>`. This guarantees identical behavior between MCP tools and CLI commands — there is no duplicated logic.
+
 **Running locally (requires root + `/etc/vitrina`):**
 
 ```json
@@ -149,8 +211,6 @@ Set `VITRINA_REMOTE` to the name of a remote profile configured via `vitrina rem
 }
 ```
 
-When `VITRINA_REMOTE` is set, tool handlers shell out to `vitrina -r <remote> <command> --json` instead of calling internal packages directly. This means the MCP server runs on your laptop but all operations execute on the VPS.
-
 **Exposed tools:**
 
 | Tool | Description |
@@ -158,20 +218,23 @@ When `VITRINA_REMOTE` is set, tool handlers shell out to `vitrina -r <remote> <c
 | `list_apps` | List all registered apps with routing status and optional health checks |
 | `get_app` | Get detailed status of one app (git info, env, containers) |
 | `add_app` | Register a new app and wire it into the proxy |
-| `deploy_app` | Clone a git repo and deploy it |
-| `redeploy_app` | Pull latest changes and rebuild containers |
-| `remove_app` | Remove an app from the proxy |
+| `deploy_app` | Clone a git repo and deploy it (always runs with `-q` for quiet output) |
+| `redeploy_app` | Pull latest changes and rebuild containers (always runs with `-q`) |
+| `push_app` | Package a local directory and deploy it without requiring git push |
+| `remove_app` | Remove an app from the proxy; `clean` flag tears down containers and removes directory |
 | `stop_app` | Stop an app's Docker containers |
 | `start_app` | Start an app's Docker containers |
 | `restart_app` | Restart an app's Docker containers |
 | `env_list` | List environment variables for an app |
-| `env_set` | Set environment variables (key-value object) |
-| `env_unset` | Unset environment variables (array of keys) |
+| `env_set` | Set environment variables — restarts containers immediately to apply changes |
+| `env_unset` | Unset environment variables — restarts containers immediately to apply changes |
 | `app_logs` | Get container logs with optional tail/since/services filters |
 | `ps_apps` | List running containers for all apps |
 | `doctor` | Diagnose inconsistencies; optionally heal them |
+| `set_health_path` | Set or clear the health check path for an app |
+| `reload` | Reload Caddy to apply config changes and retry TLS certificates |
 
-Tool handlers call `internal/*` packages directly when running locally (not via `VITRINA_REMOTE`). When `VITRINA_REMOTE` is set, they delegate to `vitrina -r <remote>` over SSH. Mutating operations require root — configure MCP clients to run `vitrina mcp` via `sudo` when running locally.
+Mutating operations require root — configure MCP clients to run `vitrina mcp` via `sudo` when running locally.
 
 `deploy` checks in this order and uses the first match. It also records `GitURL`, `GitRef`, and `LastDeployedAt` in the registry:
 
@@ -231,22 +294,26 @@ The remote package exposes three SSH helpers (all apply sudo when `UseSudo && Us
 
 ## Areas of Growth
 
-### 1. Inconsistent mutex usage in registry
-
-`registry.Add()` and `registry.Remove()` acquire `sync.Mutex`, but `Get()`, `List()`, and `NextFreePort()` do not. This is benign for a single-user CLI but architecturally inconsistent. If the codebase ever runs commands concurrently or the registry is reused as a library, these reads will race with writes. Fix: acquire the mutex in all public methods, or document the single-goroutine contract.
-
-### 2. Hardcoded paths in caddy validate/reload
+### 1. Hardcoded paths in caddy validate/reload
 
 `caddy.Validate()` and `caddy.Reload()` hardcode `/etc/caddy/Caddyfile` while `caddy.WriteAppConfig()` and `caddy.WriteMainCaddyfile()` derive paths from `*config.Config`. If `Config.CaddyConfDir` ever changes, validate/reload will silently use the wrong path. Fix: pass `*config.Config` (or the main Caddyfile path) into `Validate()` and `Reload()` so all paths are derived from a single source of truth.
 
-### 3. Shared helpers lack a home
+### 2. Shared helpers lack a home
 
 `subdomainRegex` and `requireRoot()` are defined ad-hoc in command files and shared implicitly across `cmd/`. As more commands are added, this pattern scatters validation logic. Consider a `cmd/validate.go` or `internal/cli/` package that collects shared CLI helpers (regexes, root checks, flag parsers) in one place.
 
-### 4. No structured logging or verbosity control
+### 3. No structured logging or verbosity control
 
 All output uses `fmt.Printf` / `fmt.Fprintf`. There is no `-v/--verbose` flag and no log levels. For debugging production issues on a remote VPS, a simple `log`-based approach with verbosity levels would make `vitrina logs` and error tracing far more useful. Consider a lightweight `internal/log` package wrapping `log.Logger` with level filtering.
 
-### 5. Error context in remote operations
+### 4. Error context in remote operations
 
 `remote.RunCommand` and `remote.RunScript` return raw command exit codes but limited context about which step failed. Enriching remote errors with the SSH command that failed, the remote host, and truncated stderr would make debugging bootstrap/deploy failures significantly easier.
+
+### 5. Git error auto-recovery is locale-dependent
+
+`deploy.PullLatest` matches English error strings (`"diverged"`, `"untracked"`, etc.) to trigger the `forcePull` fallback. A Git configured with a non-English locale will emit different messages and the automatic recovery silently fails. Fix: use exit codes or check `git status --porcelain` instead of parsing stderr strings.
+
+### 6. No `--json` output on mutating commands
+
+Only `list`, `ps`, `status`, and `env list` support the `--json` flag. The MCP server currently passes `--json` to these 4 commands; the other 10 mutating/informational commands lack structured output. Adding `--json` to `add`, `deploy`, `redeploy`, `remove`, `env set`, `env unset`, lifecycle, `doctor`, and `config health-path` would give MCP clients structured success/failure information.

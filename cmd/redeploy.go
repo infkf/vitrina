@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"vitrina/internal/caddy"
 	"vitrina/internal/config"
 	"vitrina/internal/deploy"
 	"vitrina/internal/registry"
@@ -91,6 +92,10 @@ func runRedeploy(_ *cobra.Command, args []string) error {
 	fmt.Println("Rebuilding containers...")
 	if err := deploy.ComposeUp(appDir, redeployQuiet); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)
+	}
+
+	if err := caddy.Reload(); err != nil {
+		fmt.Printf("Warning: Caddy reload failed: %v\n", err)
 	}
 
 	app.LastDeployedAt = time.Now().UTC().Format(time.RFC3339)

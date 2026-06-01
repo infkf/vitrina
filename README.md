@@ -177,6 +177,8 @@ This metadata powers `doctor --heal` (re-cloning missing apps), `status` (showin
 
 `vitrina mcp` starts a Model Context Protocol server over stdio, exposing all Vitrina operations as tools for AI agents. Works with Claude, Cursor, opencode, and other MCP clients.
 
+**All tool handlers — both local and remote — shell out to the `vitrina` binary.** This guarantees identical behavior between MCP tools and CLI commands.
+
 ```json
 // Add to your MCP client configuration:
 {
@@ -189,7 +191,41 @@ This metadata powers `doctor --heal` (re-cloning missing apps), `status` (showin
 }
 ```
 
-Exposed tools: `list_apps`, `get_app`, `add_app`, `deploy_app`, `redeploy_app`, `remove_app`, `stop_app`, `start_app`, `restart_app`, `env_list`, `env_set`, `env_unset`, `app_logs`, `ps_apps`, `doctor`.
+Set `VITRINA_REMOTE` to a remote name to delegate all operations over SSH:
+
+```json
+{
+  "mcpServers": {
+    "vitrina": {
+      "command": "vitrina",
+      "args": ["mcp"],
+      "env": { "VITRINA_REMOTE": "prod" }
+    }
+  }
+}
+```
+
+**Exposed tools:**
+
+| Tool | Description |
+|------|-------------|
+| `list_apps` | List all registered apps with routing status and optional health checks |
+| `get_app` | Get detailed status of one app (git info, env, containers) |
+| `add_app` | Register a new app and wire it into the proxy |
+| `deploy_app` | Clone a git repo and deploy it (quiet mode auto-enabled) |
+| `redeploy_app` | Pull latest changes and rebuild containers (quiet mode auto-enabled) |
+| `push_app` | Package a local directory and deploy it without requiring git push |
+| `remove_app` | Remove an app from the proxy; `clean` flag tears down containers and removes directory |
+| `stop_app` | Stop an app's Docker containers |
+| `start_app` | Start an app's Docker containers |
+| `restart_app` | Restart an app's Docker containers |
+| `env_list` | List environment variables for an app |
+| `env_set` | Set environment variables — restarts containers immediately |
+| `env_unset` | Unset environment variables — restarts containers immediately |
+| `app_logs` | Get container logs with optional tail/since/services filters |
+| `ps_apps` | List running containers for all apps |
+| `doctor` | Diagnose inconsistencies; optionally heal them |
+| `reload` | Reload Caddy to apply config changes and retry TLS certificates |
 
 All mutating operations require root — configure MCP clients to run `vitrina mcp` via `sudo`.
 
