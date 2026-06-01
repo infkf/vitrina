@@ -105,20 +105,50 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, app := range apps {
-		if !dirMap[app.Subdomain] {
-			issues = append(issues, fmt.Sprintf("Missing app directory for %s", app.Subdomain))
+		appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
+		gitDir := filepath.Join(appDir, ".git")
+		_, gitErr := os.Stat(gitDir)
+		hasGit := gitErr == nil
+
+		isMissing := !dirMap[app.Subdomain] || (app.GitURL != "" && !hasGit)
+
+		if isMissing {
+			issues = append(issues, fmt.Sprintf("Missing or incomplete app directory for %s", app.Subdomain))
 			if healFlag {
 				if app.GitURL != "" {
-					appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
 					fmt.Printf("Attempting to heal %s by cloning %s...\n", app.Subdomain, app.GitURL)
+					
+					// Backup .env if it exists
+					envPath := filepath.Join(appDir, ".env")
+					envBakPath := filepath.Join(cfg.AppsDir, app.Subdomain+".env.bak")
+					hasEnv := false
+					if _, err := os.Stat(envPath); err == nil {
+						if err := os.Rename(envPath, envBakPath); err == nil {
+							hasEnv = true
+						}
+					}
+
+					// Remove the incomplete directory to allow clean git clone
+					_ = os.RemoveAll(appDir)
+
 					if err := deploy.CloneRepo(app.GitURL, appDir, false); err != nil {
 						fixes = append(fixes, fmt.Sprintf("Failed to re-clone %s: %v", app.Subdomain, err))
+						if hasEnv {
+							_ = os.MkdirAll(appDir, 0755)
+							_ = os.Rename(envBakPath, envPath)
+						}
 					} else {
 						if app.GitRef != "" {
 							if err := deploy.CheckoutBranch(appDir, app.GitRef); err != nil {
 								_ = deploy.CheckoutTag(appDir, app.GitRef)
 							}
 						}
+						
+						// Restore the backed-up .env file
+						if hasEnv {
+							_ = os.Rename(envBakPath, envPath)
+						}
+
 						if err := deploy.WriteEnvFile(appDir, app.Port); err == nil {
 							// Check if we need to write Procfile to Compose
 							pf, _ := deploy.ParseProcfile(appDir)

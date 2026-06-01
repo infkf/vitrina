@@ -17,6 +17,16 @@ import (
 const installScript = `#!/bin/sh
 set -eu
 
+# Install basic prerequisites first to make bootstrapping robust
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update -qq
+  apt-get install -y -qq ca-certificates curl gnupg
+elif command -v dnf >/dev/null 2>&1; then
+  dnf install -y -q curl gnupg
+elif command -v yum >/dev/null 2>&1; then
+  yum install -y -q curl gnupg
+fi
+
 # ── Docker ────────────────────────────────────────────────────────────────────
 if command -v docker >/dev/null 2>&1; then
   echo "docker: already installed"

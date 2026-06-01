@@ -12,5 +12,11 @@ vitrina
 .DS_Store
 Thumbs.db
 
-# opencode local config
+# Go testing
+*.test
+*.out
+
+# Local tools and configs
 .opencode/
+.antigravitycli/
+

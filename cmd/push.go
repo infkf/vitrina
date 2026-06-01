@@ -93,7 +93,8 @@ if [ ! -d "/etc/vitrina/apps/%s" ]; then
 	echo "App %s is not deployed yet. Please use 'vitrina add %s' and optionally setup docker-compose.yml first."
 	exit 1
 fi
-mkdir -p /etc/vitrina/apps/%s
+# Clean up existing files except .env
+find /etc/vitrina/apps/%s -mindepth 1 -maxdepth 1 -not -name .env -exec rm -rf {} +
 tar -xzf %s -C /etc/vitrina/apps/%s
 rm %s
 %s redeploy %s
@@ -139,6 +140,15 @@ func runLocalPush(subdomain, localDir string) error {
 		return err
 	}
 
+	// Clean up existing files except .env
+	if entries, err := os.ReadDir(appDir); err == nil {
+		for _, entry := range entries {
+			if entry.Name() != ".env" {
+				_ = os.RemoveAll(filepath.Join(appDir, entry.Name()))
+			}
+		}
+	}
+
 	extractCmd := exec.Command("tar", "-xf", archivePath, "-C", appDir)
 	if err := extractCmd.Run(); err != nil {
 		return fmt.Errorf("failed to extract local archive: %w", err)
@@ -162,7 +172,7 @@ func buildTarArgs(archivePath, localDir string, compress bool) []string {
 	if compress {
 		flag = "-czf"
 	}
-	args := []string{flag, archivePath, "--exclude=.git"}
+	args := []string{flag, archivePath, "--exclude=.git", "--exclude=.env"}
 
 	ignoreFile := filepath.Join(localDir, ".vitrinaignore")
 	if _, err := os.Stat(ignoreFile); err == nil {

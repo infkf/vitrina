@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -96,8 +97,13 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 	fmt.Fprintln(w, "KEY\tVALUE")
-	for k, v := range vars {
-		fmt.Fprintf(w, "%s\t%s\n", k, v)
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(w, "%s\t%s\n", k, vars[k])
 	}
 	return w.Flush()
 }

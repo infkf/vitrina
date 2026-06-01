@@ -311,6 +311,7 @@ func handleDeployAppLocal(ctx context.Context, req mcpserver.CallToolRequest) (*
 
 	out, err = runCmdInDir(appDir, "docker", "compose", "up", "-d", "--build")
 	if err != nil {
+		_, _ = runCmdInDir(appDir, "docker", "compose", "down", "-v")
 		store.Remove(subdomain)
 		caddy.RemoveAppConfig(cfg, fqdn)
 		os.RemoveAll(appDir)
@@ -358,11 +359,11 @@ func handleRedeployAppLocal(ctx context.Context, req mcpserver.CallToolRequest) 
 			return toolError(fmt.Sprintf("checkout tag failed: %v", err))
 		}
 	} else if force {
-		if err := deploy.ForcePull(appDir, false); err != nil {
+		if err := deploy.ForcePull(appDir, app.GitRef, false); err != nil {
 			return toolError(fmt.Sprintf("force sync failed: %v", err))
 		}
 	} else {
-		if err := deploy.PullLatest(appDir, false); err != nil {
+		if err := deploy.PullLatest(appDir, app.GitRef, false); err != nil {
 			return toolError(fmt.Sprintf("git pull failed: %v", err))
 		}
 	}
@@ -765,17 +766,45 @@ func handleDoctorLocal(ctx context.Context, req mcpserver.CallToolRequest) (*mcp
 	}
 
 	for _, app := range apps {
-		if !dirMap[app.Subdomain] {
-			issues = append(issues, fmt.Sprintf("Missing app directory for %s", app.Subdomain))
+		appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
+		gitDir := filepath.Join(appDir, ".git")
+		_, gitErr := os.Stat(gitDir)
+		hasGit := gitErr == nil
+
+		isMissing := !dirMap[app.Subdomain] || (app.GitURL != "" && !hasGit)
+
+		if isMissing {
+			issues = append(issues, fmt.Sprintf("Missing or incomplete app directory for %s", app.Subdomain))
 			if heal {
 				if app.GitURL != "" {
-					appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
+					// Backup .env if it exists
+					envPath := filepath.Join(appDir, ".env")
+					envBakPath := filepath.Join(cfg.AppsDir, app.Subdomain+".env.bak")
+					hasEnv := false
+					if _, err := os.Stat(envPath); err == nil {
+						if err := os.Rename(envPath, envBakPath); err == nil {
+							hasEnv = true
+						}
+					}
+
+					_ = os.RemoveAll(appDir)
+
 					if out, err := runCmd("git", "clone", app.GitURL, appDir); err != nil {
 						fixes = append(fixes, fmt.Sprintf("Failed to re-clone %s: %v\n%s", app.Subdomain, err, out))
+						if hasEnv {
+							_ = os.MkdirAll(appDir, 0755)
+							_ = os.Rename(envBakPath, envPath)
+						}
 					} else {
 						if app.GitRef != "" {
 							_, _ = runCmdInDir(appDir, "git", "checkout", app.GitRef)
 						}
+						
+						// Restore the backed-up .env file
+						if hasEnv {
+							_ = os.Rename(envBakPath, envPath)
+						}
+
 						if err := deploy.WriteEnvFile(appDir, app.Port); err == nil {
 							pf, _ := deploy.ParseProcfile(appDir)
 							_ = deploy.WriteCompose(appDir, app.Subdomain, app.Port, pf)

@@ -65,12 +65,12 @@ func runRedeploy(_ *cobra.Command, args []string) error {
 			return fmt.Errorf("checkout tag failed: %w", err)
 		}
 	} else if redeployForce {
-		if err := deploy.ForcePull(appDir, redeployQuiet); err != nil {
+		if err := deploy.ForcePull(appDir, app.GitRef, redeployQuiet); err != nil {
 			return fmt.Errorf("force sync failed: %w", err)
 		}
 	} else {
 		fmt.Println("Pulling latest...")
-		if err := deploy.PullLatest(appDir, redeployQuiet); err != nil {
+		if err := deploy.PullLatest(appDir, app.GitRef, redeployQuiet); err != nil {
 			return fmt.Errorf("git pull failed: %w", err)
 		}
 	}

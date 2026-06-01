@@ -157,6 +157,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Starting containers (port %d)...\n", port)
 	if err := deploy.ComposeUp(appDir, deployQuiet); err != nil {
+		_ = deploy.ComposeCommand(appDir, "down", "-v")
 		store.Remove(subdomain)
 		caddy.RemoveAppConfig(cfg, fqdn)
 		os.RemoveAll(appDir)

@@ -99,7 +99,7 @@ func tearDownContainers(cmd *cobra.Command, appsDir, subdomain string) {
 		return
 	}
 	fmt.Printf("Tearing down Docker containers for %s...\n", subdomain)
-	if err := deploy.ComposeCommand(dir, "down", "-v"); err != nil {
+	if err := deploy.ComposeCommand(dir, "down"); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to tear down containers for %s: %v\n", subdomain, err)
 	}
 }

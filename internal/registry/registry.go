@@ -140,6 +140,9 @@ func (s *Store) Remove(subdomain string) error {
 }
 
 func (s *Store) Get(subdomain string) (*App, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	d, err := s.load()
 	if err != nil {
 		return nil, err
@@ -166,6 +169,9 @@ func isPortInUse(port int) bool {
 // NextFreePort returns the lowest available port >= startAt that is not
 // already assigned in the registry, not bound on the host, and not 80/443.
 func (s *Store) NextFreePort(startAt int) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	d, err := s.load()
 	if err != nil {
 		return 0, err
@@ -186,6 +192,9 @@ func (s *Store) NextFreePort(startAt int) (int, error) {
 }
 
 func (s *Store) List() ([]*App, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	d, err := s.load()
 	if err != nil {
 		return nil, err

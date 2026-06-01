@@ -27,9 +27,35 @@ func CloneRepo(repoURL, dir string, quiet bool) error {
 	return cmd.Run()
 }
 
-// PullLatest runs git pull in dir. On divergence (force-pushed branch) it
-// automatically falls back to git fetch + reset --hard origin/<branch>.
-func PullLatest(dir string, quiet bool) error {
+// IsTag reports whether ref is a valid git tag in the repository.
+func IsTag(dir, ref string) bool {
+	cmd := exec.Command("git", "-C", dir, "show-ref", "--tags", "refs/tags/"+ref)
+	return cmd.Run() == nil
+}
+
+// Fetch runs git fetch origin --tags in dir.
+func Fetch(dir string, quiet bool) error {
+	cmd := exec.Command("git", "-C", dir, "fetch", "origin", "--tags")
+	if !quiet {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
+	return cmd.Run()
+}
+
+// PullLatest runs git pull in dir, or fetches and checkouts if ref is a tag.
+func PullLatest(dir string, ref string, quiet bool) error {
+	if ref != "" && IsTag(dir, ref) {
+		if err := Fetch(dir, quiet); err != nil {
+			return err
+		}
+		return CheckoutTag(dir, ref)
+	}
+
+	if ref != "" {
+		_ = CheckoutBranch(dir, ref)
+	}
+
 	var stderrBuf strings.Builder
 	cmd := exec.Command("git", "-C", dir, "pull")
 	if quiet {
@@ -43,7 +69,7 @@ func PullLatest(dir string, quiet bool) error {
 		if strings.Contains(errStr, "diverged") || strings.Contains(errStr, "divergent") ||
 			strings.Contains(errStr, "untracked") || strings.Contains(errStr, "overwritten") ||
 			strings.Contains(errStr, "local changes") || strings.Contains(errStr, "merge") {
-			return forcePull(dir, quiet)
+			return forcePull(dir, ref, quiet)
 		}
 		return err
 	}
@@ -51,25 +77,34 @@ func PullLatest(dir string, quiet bool) error {
 }
 
 // ForcePull syncs dir to the remote HEAD without requiring a clean history
-// (git fetch + reset --hard). Use for force-pushed branches.
-func ForcePull(dir string, quiet bool) error {
+// (git fetch + reset --hard). Use for force-pushed branches or tags.
+func ForcePull(dir string, ref string, quiet bool) error {
 	if !quiet {
 		fmt.Println("Force-syncing to remote (fetch + reset --hard)...")
 	}
-	return forcePull(dir, quiet)
+	return forcePull(dir, ref, quiet)
 }
 
-func forcePull(dir string, quiet bool) error {
-	fetch := exec.Command("git", "-C", dir, "fetch", "origin")
-	if !quiet {
-		fetch.Stdout = os.Stdout
-		fetch.Stderr = os.Stderr
-	}
-	if err := fetch.Run(); err != nil {
+func forcePull(dir string, ref string, quiet bool) error {
+	if err := Fetch(dir, quiet); err != nil {
 		return fmt.Errorf("git fetch failed: %w", err)
 	}
-	branch := currentBranch(dir)
-	reset := exec.Command("git", "-C", dir, "reset", "--hard", "origin/"+branch)
+
+	targetRef := ref
+	if targetRef == "" {
+		targetRef = currentBranch(dir)
+	}
+
+	if IsTag(dir, targetRef) {
+		reset := exec.Command("git", "-C", dir, "reset", "--hard", "tags/"+targetRef)
+		if !quiet {
+			reset.Stdout = os.Stdout
+			reset.Stderr = os.Stderr
+		}
+		return reset.Run()
+	}
+
+	reset := exec.Command("git", "-C", dir, "reset", "--hard", "origin/"+targetRef)
 	if !quiet {
 		reset.Stdout = os.Stdout
 		reset.Stderr = os.Stderr
