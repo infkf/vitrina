@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/config"
 )
 
 func cleanup(t *testing.T) {

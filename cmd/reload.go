@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/caddy"
 
 	"github.com/spf13/cobra"
 )

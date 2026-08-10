@@ -3,9 +3,9 @@ package cmd
 import (
 	"fmt"
 
-	"vitrina/internal/caddy"
-	"vitrina/internal/config"
-	"vitrina/internal/output"
+	"github.com/infkf/vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/output"
 
 	"github.com/spf13/cobra"
 )

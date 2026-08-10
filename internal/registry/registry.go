@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/config"
 )
 
 type App struct {

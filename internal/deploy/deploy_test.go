@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"vitrina/internal/deploy"
+	"github.com/infkf/vitrina/internal/deploy"
 )
 
 func TestParseProcfile(t *testing.T) {

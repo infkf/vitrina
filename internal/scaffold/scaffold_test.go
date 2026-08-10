@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"vitrina/internal/scaffold"
+	"github.com/infkf/vitrina/internal/scaffold"
 )
 
 func TestGenerateDocker(t *testing.T) {

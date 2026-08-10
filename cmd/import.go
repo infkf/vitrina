@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vitrina/internal/caddy"
-	"vitrina/internal/config"
-	"vitrina/internal/remote"
+	"github.com/infkf/vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/remote"
 
 	"github.com/spf13/cobra"
 )

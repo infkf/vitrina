@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"vitrina/internal/config"
-	"vitrina/internal/deploy"
-	"vitrina/internal/output"
-	"vitrina/internal/registry"
+	"github.com/infkf/vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/deploy"
+	"github.com/infkf/vitrina/internal/output"
+	"github.com/infkf/vitrina/internal/registry"
 
 	"github.com/spf13/cobra"
 )

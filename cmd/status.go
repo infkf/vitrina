@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vitrina/internal/config"
-	"vitrina/internal/deploy"
-	"vitrina/internal/registry"
+	"github.com/infkf/vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/deploy"
+	"github.com/infkf/vitrina/internal/registry"
 
 	"github.com/spf13/cobra"
 )
@@ -70,6 +70,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("URL:        https://%s\n", app.FQDN)
 	fmt.Printf("Port:       %d\n", app.Port)
 	fmt.Printf("Created:    %s\n", app.CreatedAt)
+	printInstalledVersion()
 	fmt.Println()
 
 	fmt.Println("=== Source ===")

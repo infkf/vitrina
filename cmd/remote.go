@@ -5,7 +5,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"vitrina/internal/remote"
+	"github.com/infkf/vitrina/internal/remote"
 
 	"github.com/spf13/cobra"
 )

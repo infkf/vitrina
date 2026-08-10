@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/config"
 )
 
 const snippetTemplate = `%s {

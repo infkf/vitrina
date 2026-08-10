@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"vitrina/internal/output"
-	"vitrina/internal/remote"
+	"github.com/infkf/vitrina/internal/output"
+	"github.com/infkf/vitrina/internal/remote"
 
 	"github.com/spf13/cobra"
 )
@@ -204,6 +204,8 @@ func runBootstrap(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("vitrina init failed: %w", err)
 	}
 
+	_ = remote.RunCommand(r, fmt.Sprintf("%s __record-version", r.VitrinaPath))
+
 	output.Success("Bootstrap complete. Deploy your first app with:")
 	fmt.Printf("  vitrina -r %s deploy <subdomain> <git-url>\n", remoteName)
 	return nil
@@ -240,7 +242,8 @@ func autoBuildLinuxBinary(remoteName string) (string, error) {
 	tmp.Close()
 
 	timer := output.StartTimer("==> Building Linux binary...")
-	build := exec.Command("go", "build", "-o", tmp.Name(), ".")
+	ldflags := buildLDFlags(srcDir)
+	build := exec.Command("go", "build", "-ldflags", ldflags, "-o", tmp.Name(), ".")
 	build.Dir = srcDir
 	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64")
 	build.Stdout = os.Stderr

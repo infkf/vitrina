@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"vitrina/internal/caddy"
-	"vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/config"
 )
 
 func testConfig() *config.Config {

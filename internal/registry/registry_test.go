@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"vitrina/internal/registry"
+	"github.com/infkf/vitrina/internal/registry"
 )
 
 func newStore(t *testing.T) *registry.Store {

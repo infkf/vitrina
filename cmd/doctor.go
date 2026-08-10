@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"strings"
 
-	"vitrina/internal/caddy"
-	"vitrina/internal/config"
-	"vitrina/internal/deploy"
-	"vitrina/internal/output"
-	"vitrina/internal/registry"
+	"github.com/infkf/vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/deploy"
+	"github.com/infkf/vitrina/internal/output"
+	"github.com/infkf/vitrina/internal/registry"
 
 	"github.com/spf13/cobra"
 )
@@ -64,6 +64,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	var fixes []string
 
 	fmt.Println(output.Bold("Running Vitrina checks..."))
+	printInstalledVersion()
 
 	// 1. Check for dangling Caddy configs
 	caddyMap := make(map[string]bool)

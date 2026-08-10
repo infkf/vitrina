@@ -8,8 +8,16 @@ Vitrina is a lightweight PaaS-lite CLI toolbox (Go) for managing web apps on a s
 
 ```bash
 go mod tidy           # sync dependencies
-go build -o vitrina . # build binary
+go build -o vitrina . # build binary (dev version)
 go vet ./...          # static analysis
+```
+
+For a release build with embedded version:
+```bash
+VERSION=$(git describe --tags --always --dirty) \
+COMMIT=$(git rev-parse --short HEAD) \
+BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+go build -ldflags "-s -w -X github.com/infkf/vitrina/internal/version.Version=$VERSION -X github.com/infkf/vitrina/internal/version.Commit=$COMMIT -X github.com/infkf/vitrina/internal/version.BuildTime=$BUILD_TIME" -o vitrina .
 ```
 
 Each internal package has `_test.go` files. Run tests with:
@@ -43,7 +51,10 @@ cmd/            Cobra commands — user-facing logic, argument parsing
   reload.go     Reload Caddy to pick up config changes and retry TLS certs
   export.go     Backup state to a tarball
   import.go     Restore state from a tarball
+  upgrade.go    Rebuild from source and replace local or remote vitrina binary
   mcp.go        Start MCP server for AI agent integration
+  version_cmd.go Show version and record it on remote
+  build.go      Shared ldflags builder for cross-compilation
 
 internal/
   config/       Reads/writes /etc/vitrina/config.json (domain, email, paths)
@@ -53,6 +64,8 @@ internal/
   deploy/       Git helpers (CloneRepo, PullLatest with force-push recovery, ForcePull), Procfile parser, docker-compose generator, ComposeUp (quiet mode), ComposeRestart, ComposeIsRunning, env helpers
   remote/       SSH remote profile store; Execute, RunScript, RunCommand, UploadFile
   mcp/          MCP server exposing Vitrina commands as tools for AI agents; all handlers shell out to the vitrina binary (no duplicated local logic)
+  output/       ANSI color helpers (Red, Green, Yellow, Bold, Dim), icons (✔/✖/⚠/ℹ), HealthStatus coloring, StartTimer/Stop for long operations
+  version/      ldflags-injected Version, Commit, BuildTime; String() returns formatted version
 ```
 
 **Key principle:** One app = one `.caddy` snippet in `/etc/caddy/conf.d/`. A bad config for one app never breaks the proxy for others.

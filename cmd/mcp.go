@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	vitrinamcp "vitrina/internal/mcp"
+	vitrinamcp "github.com/infkf/vitrina/internal/mcp"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"

@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"vitrina/internal/output"
-	"vitrina/internal/remote"
+	"github.com/infkf/vitrina/internal/output"
+	"github.com/infkf/vitrina/internal/remote"
+	"github.com/infkf/vitrina/internal/version"
 
 	"github.com/spf13/cobra"
 )
@@ -27,9 +28,11 @@ Remote execution:
   Configure remotes with: vitrina remote set <name> --host <ip>`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	Version:       version.String(),
 }
 
 func init() {
+	rootCmd.SetVersionTemplate("{{ .Version }}\n")
 	rootCmd.PersistentFlags().StringVarP(&remoteName, "remote", "r", "",
 		"Execute on remote VPS (configure with 'vitrina remote set')")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false,

@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	"vitrina/internal/config"
-	"vitrina/internal/deploy"
-	"vitrina/internal/registry"
+	"github.com/infkf/vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/deploy"
+	"github.com/infkf/vitrina/internal/registry"
 
 	"github.com/spf13/cobra"
 )

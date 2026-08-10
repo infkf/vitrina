@@ -5,11 +5,11 @@ import (
 	"regexp"
 	"strconv"
 
-	"vitrina/internal/caddy"
-	"vitrina/internal/config"
-	"vitrina/internal/output"
-	"vitrina/internal/registry"
-	"vitrina/internal/scaffold"
+	"github.com/infkf/vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/config"
+	"github.com/infkf/vitrina/internal/output"
+	"github.com/infkf/vitrina/internal/registry"
+	"github.com/infkf/vitrina/internal/scaffold"
 
 	"github.com/spf13/cobra"
 )

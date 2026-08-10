@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"vitrina/internal/output"
-	"vitrina/internal/remote"
+	"github.com/infkf/vitrina/internal/output"
+	"github.com/infkf/vitrina/internal/remote"
 
 	"github.com/spf13/cobra"
 )
@@ -75,6 +75,7 @@ func runLocalUpgrade() error {
 	}
 
 	output.Successf("Upgraded: %s", targetPath)
+	_ = recordInstalledVersion()
 	return nil
 }
 
@@ -112,7 +113,9 @@ func runRemoteUpgrade(remoteName string) error {
 
 	_ = remote.RunCommand(r, "rm /tmp/vitrina")
 
-	verifyCmd := fmt.Sprintf("%s --help 2>&1 | head -1", r.VitrinaPath)
+	_ = remote.RunCommand(r, fmt.Sprintf("%s __record-version", r.VitrinaPath))
+
+	verifyCmd := fmt.Sprintf("%s --version", r.VitrinaPath)
 	out, err := remote.RunCommandCaptured(r, verifyCmd)
 	if err != nil {
 		output.Warnf("binary replaced but verification failed: %v", err)
@@ -171,7 +174,8 @@ func autoBuildBinary(goos, goarch string) (string, error) {
 	tmp.Close()
 
 	timer := output.StartTimer(fmt.Sprintf("Building %s/%s binary", goos, goarch))
-	build := exec.Command("go", "build", "-o", tmp.Name(), ".")
+	ldflags := buildLDFlags(srcDir)
+	build := exec.Command("go", "build", "-ldflags", ldflags, "-o", tmp.Name(), ".")
 	build.Dir = srcDir
 	build.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch)
 	build.Stdout = os.Stderr
