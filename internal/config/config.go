@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/infkf/vitrina/internal/atomicfile"
 )
 
 const (
@@ -19,6 +21,7 @@ const (
 type Config struct {
 	Domain       string `json:"domain"`
 	Email        string `json:"email"`
+	Caddyfile    string `json:"caddyfile,omitempty"`
 	CaddyConfDir string `json:"caddy_conf_dir"`
 	AppsDir      string `json:"apps_dir"`
 }
@@ -54,6 +57,9 @@ func Load() (*Config, error) {
 	if cfg.CaddyConfDir == "" {
 		cfg.CaddyConfDir = DefaultCaddyConfD
 	}
+	if cfg.Caddyfile == "" {
+		cfg.Caddyfile = filepath.Join(DefaultCaddyDir, "Caddyfile")
+	}
 	if cfg.AppsDir == "" {
 		cfg.AppsDir = DefaultAppsDir
 	}
@@ -74,7 +80,7 @@ func Save(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
-	if err := os.WriteFile(Path(), data, 0644); err != nil {
+	if err := atomicfile.Write(Path(), data, 0600); err != nil {
 		return fmt.Errorf("failed to write config to %s: %w", Path(), err)
 	}
 	return nil

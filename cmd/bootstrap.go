@@ -134,7 +134,7 @@ func init() {
 	rootCmd.AddCommand(bootstrapCmd)
 }
 
-func runBootstrap(_ *cobra.Command, args []string) error {
+func runBootstrap(cmd *cobra.Command, args []string) error {
 	remoteName := args[0]
 
 	cfg, err := remote.Load()
@@ -184,27 +184,27 @@ func runBootstrap(_ *cobra.Command, args []string) error {
 	fmt.Printf("Bootstrapping %s (%s)...\n\n", remoteName, r.Host)
 
 	fmt.Println("==> Installing dependencies")
-	if err := remote.RunScript(r, installScript); err != nil {
+	if err := remote.RunScriptContext(cmd.Context(), r, installScript); err != nil {
 		return fmt.Errorf("install script failed: %w", err)
 	}
 
 	fmt.Println("\n==> Uploading vitrina binary")
-	if err := remote.UploadFile(r, binaryPath, "/tmp/vitrina"); err != nil {
+	if err := remote.UploadFileContext(cmd.Context(), r, binaryPath, "/tmp/vitrina"); err != nil {
 		return fmt.Errorf("binary upload failed: %w", err)
 	}
-	installCmd := fmt.Sprintf("install -m 0755 /tmp/vitrina %s", r.VitrinaPath)
-	if err := remote.RunCommand(r, installCmd); err != nil {
+	installCmd := fmt.Sprintf("install -m 0755 /tmp/vitrina %s", remote.Quote(r.VitrinaPath))
+	if err := remote.RunCommandContext(cmd.Context(), r, installCmd); err != nil {
 		return fmt.Errorf("failed to install binary to %s: %w", r.VitrinaPath, err)
 	}
 
 	fmt.Println("\n==> Initializing Vitrina")
 	initCmd := fmt.Sprintf("%s init --domain %s --email %s",
-		r.VitrinaPath, domain, email)
-	if err := remote.RunCommand(r, initCmd); err != nil {
+		remote.Quote(r.VitrinaPath), remote.Quote(domain), remote.Quote(email))
+	if err := remote.RunCommandContext(cmd.Context(), r, initCmd); err != nil {
 		return fmt.Errorf("vitrina init failed: %w", err)
 	}
 
-	_ = remote.RunCommand(r, fmt.Sprintf("%s __record-version", r.VitrinaPath))
+	_ = remote.RunCommandContext(cmd.Context(), r, fmt.Sprintf("%s __record-version", remote.Quote(r.VitrinaPath)))
 
 	output.Success("Bootstrap complete. Deploy your first app with:")
 	fmt.Printf("  vitrina -r %s deploy <subdomain> <git-url>\n", remoteName)

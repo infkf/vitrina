@@ -11,11 +11,11 @@ import (
 
 func TestParseProcfile(t *testing.T) {
 	tests := []struct {
-		name     string
-		content  string
-		wantLen  int
-		wantWeb  string
-		wantRel  string
+		name    string
+		content string
+		wantLen int
+		wantWeb string
+		wantRel string
 	}{
 		{
 			name:    "simple web only",
@@ -128,6 +128,34 @@ func TestHasDockerfile(t *testing.T) {
 	}
 }
 
+func TestIsGitRepository(t *testing.T) {
+	t.Run("missing git entry", func(t *testing.T) {
+		if deploy.IsGitRepository(t.TempDir()) {
+			t.Error("expected non-Git directory")
+		}
+	})
+
+	t.Run("git directory", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dir, ".git"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if !deploy.IsGitRepository(dir) {
+			t.Error("expected Git directory")
+		}
+	})
+
+	t.Run("git worktree file", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: /tmp/repo/.git/worktrees/app\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if !deploy.IsGitRepository(dir) {
+			t.Error("expected Git worktree")
+		}
+	})
+}
+
 func TestWriteEnvFileNew(t *testing.T) {
 	dir := t.TempDir()
 
@@ -141,6 +169,13 @@ func TestWriteEnvFileNew(t *testing.T) {
 	}
 	if string(content) != "PORT=3000\n" {
 		t.Errorf("expected PORT=3000\\n, got %q", string(content))
+	}
+	info, err := os.Stat(filepath.Join(dir, ".env"))
+	if err != nil {
+		t.Fatalf("failed to stat .env: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("expected .env mode 0600, got %o", info.Mode().Perm())
 	}
 }
 

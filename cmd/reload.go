@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"github.com/infkf/vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/config"
 
 	"github.com/spf13/cobra"
 )
@@ -27,7 +28,11 @@ func runReload(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if err := caddy.Reload(); err != nil {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if err := caddy.Reload(cfg); err != nil {
 		return err
 	}
 

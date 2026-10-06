@@ -119,7 +119,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 			if healFlag {
 				if app.GitURL != "" {
 					fmt.Printf("Attempting to heal %s by cloning %s...\n", app.Subdomain, app.GitURL)
-					
+
 					// Backup .env if it exists
 					envPath := filepath.Join(appDir, ".env")
 					envBakPath := filepath.Join(cfg.AppsDir, app.Subdomain+".env.bak")
@@ -145,7 +145,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 								_ = deploy.CheckoutTag(appDir, app.GitRef)
 							}
 						}
-						
+
 						// Restore the backed-up .env file
 						if hasEnv {
 							_ = os.Rename(envBakPath, envPath)
@@ -265,8 +265,8 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("\nReloading Caddy to apply config changes...")
-	_ = caddy.Validate()
-	if err := caddy.Reload(); err != nil {
+	_ = caddy.Validate(cfg)
+	if err := caddy.Reload(cfg); err != nil {
 		output.Warnf("failed to reload Caddy: %v", err)
 	}
 

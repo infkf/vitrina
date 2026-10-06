@@ -36,11 +36,13 @@ changelog:
       - Merge pull request
       - Merge branch
 
+# Homebrew tap: goreleaser pushes formula updates to infkf/homebrew-vitrina
 brews:
   - name: vitrina
     repository:
       owner: infkf
       name: homebrew-vitrina
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/infkf/vitrina"
     description: "Lightweight PaaS-lite CLI toolbox for single-VPS app hosting"
     license: "MIT"

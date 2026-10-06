@@ -20,7 +20,7 @@ func testConfig() *config.Config {
 }
 
 func TestMainCaddyfileContent(t *testing.T) {
-	content := caddy.MainCaddyfileContent("admin@example.com")
+	content := caddy.MainCaddyfileContent("admin@example.com", config.DefaultCaddyConfD)
 
 	if !strings.Contains(content, "admin@example.com") {
 		t.Errorf("expected email in Caddyfile:\n%s", content)

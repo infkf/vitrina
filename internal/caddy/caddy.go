@@ -62,9 +62,9 @@ func ListAppConfigs(cfg *config.Config) ([]string, error) {
 	return configs, nil
 }
 
-func Validate() error {
+func Validate(cfg *config.Config) error {
 	cmd := exec.Command("caddy", "validate",
-		"--config", "/etc/caddy/Caddyfile",
+		"--config", cfg.Caddyfile,
 		"--adapter", "caddyfile",
 	)
 	output, err := cmd.CombinedOutput()
@@ -74,9 +74,9 @@ func Validate() error {
 	return nil
 }
 
-func Reload() error {
+func Reload(cfg *config.Config) error {
 	methods := [][]string{
-		{"caddy", "reload", "--config", "/etc/caddy/Caddyfile"},
+		{"caddy", "reload", "--config", cfg.Caddyfile},
 		{"systemctl", "reload", "caddy"},
 		{"pkill", "-USR1", "caddy"},
 	}
@@ -94,7 +94,7 @@ func Reload() error {
 	return fmt.Errorf("all reload methods failed, last error: %w", lastErr)
 }
 
-func MainCaddyfileContent(email string) string {
+func MainCaddyfileContent(email, confDir string) string {
 	return fmt.Sprintf(`# Managed by Vitrina — do not edit manually unless you know what you are doing.
 
 {
@@ -102,21 +102,20 @@ func MainCaddyfileContent(email string) string {
 }
 
 import %s/*
-`, email, config.DefaultCaddyConfD)
+`, email, confDir)
 }
 
-func WriteMainCaddyfile(email string) error {
-	if err := os.MkdirAll(config.DefaultCaddyDir, 0755); err != nil {
-		return fmt.Errorf("failed to create %s: %w", config.DefaultCaddyDir, err)
+func WriteMainCaddyfile(cfg *config.Config) error {
+	if err := os.MkdirAll(filepath.Dir(cfg.Caddyfile), 0755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", filepath.Dir(cfg.Caddyfile), err)
 	}
-	if err := os.MkdirAll(config.DefaultCaddyConfD, 0755); err != nil {
-		return fmt.Errorf("failed to create %s: %w", config.DefaultCaddyConfD, err)
+	if err := os.MkdirAll(cfg.CaddyConfDir, 0755); err != nil {
+		return fmt.Errorf("failed to create %s: %w", cfg.CaddyConfDir, err)
 	}
 
-	path := filepath.Join(config.DefaultCaddyDir, "Caddyfile")
-	content := MainCaddyfileContent(email)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return fmt.Errorf("failed to write %s: %w", path, err)
+	content := MainCaddyfileContent(cfg.Email, cfg.CaddyConfDir)
+	if err := os.WriteFile(cfg.Caddyfile, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", cfg.Caddyfile, err)
 	}
 	return nil
 }

@@ -34,8 +34,8 @@ The health check path determines which URL is queried when running
 }
 
 var (
-	updateDomain         string
-	updateEmail          string
+	updateDomain          string
+	updateEmail           string
 	configHealthPathClear bool
 )
 
@@ -80,7 +80,7 @@ func runConfigUpdate(cmd *cobra.Command, args []string) error {
 	fmt.Println("Configuration updated.")
 
 	if updateEmail != "" {
-		if err := caddy.WriteMainCaddyfile(cfg.Email); err != nil {
+		if err := caddy.WriteMainCaddyfile(cfg); err != nil {
 			return fmt.Errorf("failed to update Main Caddyfile: %w", err)
 		}
 		fmt.Println("Regenerated Main Caddyfile.")
@@ -109,10 +109,10 @@ func runConfigUpdate(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Updated FQDNs for %d apps.\n", len(apps))
 	}
 
-	if err := caddy.Validate(); err != nil {
+	if err := caddy.Validate(cfg); err != nil {
 		output.Warnf("Caddy validation failed after updates: %v", err)
 	} else {
-		_ = caddy.Reload()
+		_ = caddy.Reload(cfg)
 		fmt.Println("Caddy reloaded successfully.")
 	}
 

@@ -58,13 +58,13 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Uploading import to %s...\n", name)
 	remoteIn := "/tmp/vitrina-import.tar.gz"
-	if err := remote.UploadFile(r, absIn, remoteIn); err != nil {
+	if err := remote.UploadFileContext(cmd.Context(), r, absIn, remoteIn); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
 	fmt.Printf("Applying import on %s...\n", name)
-	script := fmt.Sprintf(`%s import %s`, r.VitrinaPath, remoteIn)
-	if err := remote.RunScript(r, script); err != nil {
+	script := fmt.Sprintf(`%s import %s`, remote.Quote(r.VitrinaPath), remoteIn)
+	if err := remote.RunScriptContext(cmd.Context(), r, script); err != nil {
 		return fmt.Errorf("remote import failed: %w", err)
 	}
 
@@ -155,17 +155,17 @@ func runLocalImport(inPath string) error {
 	}
 
 	fmt.Println("Import complete. Running 'vitrina doctor --heal' to restore state...")
-	
+
 	cfg, _ = config.Load()
 	if cfg != nil {
-		_ = caddy.WriteMainCaddyfile(cfg.Email)
+		_ = caddy.WriteMainCaddyfile(cfg)
 	}
 
 	cmdStr := os.Args[0]
 	if !strings.HasSuffix(cmdStr, "vitrina") {
 		cmdStr = "vitrina"
 	}
-	
+
 	healCmd := exec.Command(cmdStr, "doctor", "--heal")
 	healCmd.Stdout = os.Stdout
 	healCmd.Stderr = os.Stderr

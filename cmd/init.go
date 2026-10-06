@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/infkf/vitrina/internal/caddy"
 	"github.com/infkf/vitrina/internal/config"
@@ -44,6 +45,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	cfg := &config.Config{
 		Domain:       initDomain,
 		Email:        initEmail,
+		Caddyfile:    filepath.Join(config.DefaultCaddyDir, "Caddyfile"),
 		CaddyConfDir: config.DefaultCaddyConfD,
 		AppsDir:      config.DefaultAppsDir,
 	}
@@ -52,13 +54,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := caddy.WriteMainCaddyfile(initEmail); err != nil {
+	if err := caddy.WriteMainCaddyfile(cfg); err != nil {
 		return err
 	}
 
 	output.Success("Vitrina initialized successfully.")
 	fmt.Printf("  Config:       %s\n", config.Path())
-	fmt.Printf("  Caddyfile:    /etc/caddy/Caddyfile\n")
+	fmt.Printf("  Caddyfile:    %s\n", cfg.Caddyfile)
 	fmt.Printf("  App snippets: %s/\n\n", config.DefaultCaddyConfD)
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Review /etc/caddy/Caddyfile")

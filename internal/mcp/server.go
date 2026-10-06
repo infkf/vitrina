@@ -38,19 +38,31 @@ func runVitrina(args ...string) (*mcpserver.CallToolResult, error) {
 	}
 	cmd := exec.Command("vitrina", args...)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return toolError(fmt.Sprintf("vitrina %s: %v\n%s", strings.Join(args, " "), err, string(out)))
-	}
-	return toolText(string(out))
+	return structuredToolResult(out, err, args)
 }
 
 func runVitrinaLocal(args ...string) (*mcpserver.CallToolResult, error) {
 	cmd := exec.Command("vitrina", args...)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return toolError(fmt.Sprintf("vitrina %s: %v\n%s", strings.Join(args, " "), err, string(out)))
+	return structuredToolResult(out, err, args)
+}
+
+func structuredToolResult(out []byte, runErr error, args []string) (*mcpserver.CallToolResult, error) {
+	var value any
+	if json.Unmarshal(out, &value) == nil {
+		result, err := toolResult(value)
+		if err != nil {
+			return result, err
+		}
+		if runErr != nil {
+			result.IsError = true
+		}
+		return result, nil
 	}
-	return toolText(string(out))
+	if runErr != nil {
+		return toolError(fmt.Sprintf("vitrina %s failed: %v", strings.Join(args, " "), runErr))
+	}
+	return toolError("vitrina returned invalid JSON protocol output")
 }
 
 func registerTools(s *server.MCPServer) {

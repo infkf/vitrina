@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/infkf/vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/clierror"
 	"github.com/infkf/vitrina/internal/config"
 	"github.com/infkf/vitrina/internal/output"
 	"github.com/infkf/vitrina/internal/registry"
@@ -86,7 +87,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write caddy config: %w", err)
 	}
 
-	if err := caddy.Validate(); err != nil {
+	if err := caddy.Validate(cfg); err != nil {
 		caddy.RemoveAppConfig(cfg, fqdn)
 		return fmt.Errorf("caddy validation failed — changes rolled back:\n%w", err)
 	}
@@ -96,9 +97,8 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("registration failed — caddy config rolled back: %w", err)
 	}
 
-	if err := caddy.Reload(); err != nil {
-		output.Warnf("app registered but Caddy reload failed: %v\nRun 'vitrina list' to verify, then reload Caddy manually.", err)
-		return nil
+	if err := caddy.Reload(cfg); err != nil {
+		return &clierror.ClassifiedError{Code: clierror.CodePartial, Category: "partial-success", Retryable: true, Err: fmt.Errorf("app registered but Caddy reload failed: %w", err)}
 	}
 
 	output.Successf("Registered: %s -> localhost:%d", fqdn, port)

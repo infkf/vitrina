@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/infkf/vitrina/internal/clierror"
 	"github.com/infkf/vitrina/internal/config"
 	"github.com/infkf/vitrina/internal/deploy"
 	"github.com/infkf/vitrina/internal/output"
@@ -46,10 +47,12 @@ var envUnsetCmd = &cobra.Command{
 }
 
 var envApply bool
+var envShowValues bool
 
 func init() {
 	envSetCmd.Flags().BoolVar(&envApply, "apply", false, "Restart containers after setting vars to apply changes immediately")
 	envUnsetCmd.Flags().BoolVar(&envApply, "apply", false, "Restart containers after unsetting vars to apply changes immediately")
+	envListCmd.Flags().BoolVar(&envShowValues, "show-values", false, "Show secret values (disabled by default)")
 	envCmd.AddCommand(envListCmd)
 	envCmd.AddCommand(envSetCmd)
 	envCmd.AddCommand(envUnsetCmd)
@@ -91,6 +94,11 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 
 	if jsonOutput {
+		if !envShowValues {
+			for key := range vars {
+				vars[key] = "[redacted]"
+			}
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(vars)
@@ -104,7 +112,11 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		fmt.Fprintf(w, "%s\t%s\n", k, vars[k])
+		value := "[redacted]"
+		if envShowValues {
+			value = vars[k]
+		}
+		fmt.Fprintf(w, "%s\t%s\n", k, value)
 	}
 	return w.Flush()
 }
@@ -157,8 +169,8 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 
 	if envApply {
 		fmt.Println("Restarting containers to apply changes...")
-		if err := deploy.ComposeRestart(appDir, false); err != nil {
-			return fmt.Errorf("restart failed: %w", err)
+		if err := deploy.ComposeRestartContext(cmd.Context(), appDir, false); err != nil {
+			return &clierror.ClassifiedError{Code: clierror.CodePartial, Category: "partial-success", Retryable: true, Err: fmt.Errorf("environment file updated but restart failed: %w", err)}
 		}
 		fmt.Printf("Environment variables set and applied to %s.\n", subdomain)
 	} else {
@@ -211,8 +223,8 @@ func runEnvUnset(cmd *cobra.Command, args []string) error {
 
 	if envApply {
 		fmt.Println("Restarting containers to apply changes...")
-		if err := deploy.ComposeRestart(appDir, false); err != nil {
-			return fmt.Errorf("restart failed: %w", err)
+		if err := deploy.ComposeRestartContext(cmd.Context(), appDir, false); err != nil {
+			return &clierror.ClassifiedError{Code: clierror.CodePartial, Category: "partial-success", Retryable: true, Err: fmt.Errorf("environment file updated but restart failed: %w", err)}
 		}
 		fmt.Printf("Environment variables unset and applied to %s.\n", subdomain)
 	} else {

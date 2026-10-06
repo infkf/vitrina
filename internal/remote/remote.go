@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,12 +11,17 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/infkf/vitrina/internal/atomicfile"
+	"github.com/infkf/vitrina/internal/clierror"
 	"github.com/spf13/cobra"
 )
 
 func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
+
+// Quote returns a shell-safe single-quoted argument for scripts sent over SSH.
+func Quote(s string) string { return shellEscape(s) }
 
 type Remote struct {
 	Host         string `json:"host"`
@@ -77,7 +83,7 @@ func Save(c *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath(), data, 0600)
+	return atomicfile.Write(configPath(), data, 0600)
 }
 
 func (r *Remote) ApplyDefaults() {
@@ -123,67 +129,87 @@ func Execute(name string, cmd *cobra.Command, args []string) error {
 
 	sshArgs := buildSSHArgs(r, remoteCmd)
 
-	sshCmd := exec.Command("ssh", sshArgs...)
-	sshCmd.Stdin = os.Stdin
+	sshCmd := exec.CommandContext(cmd.Context(), "ssh", sshArgs...)
+	sshCmd.Stdin = nil
 	sshCmd.Stdout = os.Stdout
 	sshCmd.Stderr = os.Stderr
 
-	return sshCmd.Run()
+	return wrapCommandError(sshCmd.Run())
 }
 
 // RunScript pipes script to bash over SSH, applying sudo when configured.
 func RunScript(r *Remote, script string) error {
+	return RunScriptContext(context.Background(), r, script)
+}
+
+func RunScriptContext(ctx context.Context, r *Remote, script string) error {
 	command := "bash -s"
 	if r.UseSudo && r.User != "root" {
 		command = "sudo " + command
 	}
 	args := buildSSHArgs(r, command)
-	cmd := exec.Command("ssh", args...)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	cmd.Stdin = strings.NewReader(script)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return wrapCommandError(cmd.Run())
 }
 
 // RunCommand runs a single shell command over SSH, applying sudo when configured.
 func RunCommand(r *Remote, command string) error {
+	return RunCommandContext(context.Background(), r, command)
+}
+
+func RunCommandContext(ctx context.Context, r *Remote, command string) error {
 	if r.UseSudo && r.User != "root" {
 		command = "sudo " + command
 	}
 	args := buildSSHArgs(r, command)
-	cmd := exec.Command("ssh", args...)
-	cmd.Stdin = os.Stdin
+	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd.Stdin = nil
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return wrapCommandError(cmd.Run())
 }
 
 // RunCommandCaptured is like RunCommand but returns combined stdout+stderr.
 func RunCommandCaptured(r *Remote, command string) (string, error) {
+	return RunCommandCapturedContext(context.Background(), r, command)
+}
+
+func RunCommandCapturedContext(ctx context.Context, r *Remote, command string) (string, error) {
 	if r.UseSudo && r.User != "root" {
 		command = "sudo " + command
 	}
 	args := buildSSHArgs(r, command)
-	cmd := exec.Command("ssh", args...)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	return strings.TrimSpace(string(out)), wrapCommandError(err)
 }
 
 // UploadFile copies localPath to remotePath on r via SCP.
 func UploadFile(r *Remote, localPath, remotePath string) error {
+	return UploadFileContext(context.Background(), r, localPath, remotePath)
+}
+
+func UploadFileContext(ctx context.Context, r *Remote, localPath, remotePath string) error {
 	args := buildSCPArgs(r)
 	args = append(args, localPath, fmt.Sprintf("%s@%s:%s", r.User, r.Host, remotePath))
-	cmd := exec.Command("scp", args...)
+	cmd := exec.CommandContext(ctx, "scp", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return wrapCommandError(cmd.Run())
 }
 
 func buildSCPArgs(r *Remote) []string {
 	args := []string{
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "BatchMode=yes",
 		"-o", "PasswordAuthentication=no",
 		"-o", "ConnectTimeout=10",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=3",
+		"-o", "ConnectionAttempts=3",
 		"-P", fmt.Sprintf("%d", r.Port),
 	}
 	if r.IdentityFile != "" {
@@ -256,8 +282,12 @@ func buildSSHArgs(r *Remote, remoteCmd string) []string {
 	args := []string{
 		"-q",
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "BatchMode=yes",
 		"-o", "PasswordAuthentication=no",
 		"-o", "ConnectTimeout=10",
+		"-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=3",
+		"-o", "ConnectionAttempts=3",
 		"-p", fmt.Sprintf("%d", r.Port),
 	}
 
@@ -276,8 +306,13 @@ func buildSSHArgs(r *Remote, remoteCmd string) []string {
 
 // DownloadFile uses scp to download a remote file to a local path.
 func DownloadFile(r *Remote, remotePath, localPath string) error {
+	return DownloadFileContext(context.Background(), r, remotePath, localPath)
+}
+
+func DownloadFileContext(ctx context.Context, r *Remote, remotePath, localPath string) error {
 	args := []string{
 		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "BatchMode=yes",
 		"-o", "PasswordAuthentication=no",
 		"-o", "ConnectTimeout=10",
 	}
@@ -290,12 +325,29 @@ func DownloadFile(r *Remote, remotePath, localPath string) error {
 		args = append(args, "-i", idFile)
 	}
 	args = append(args, "-P", fmt.Sprintf("%d", r.Port))
-	
+
 	target := fmt.Sprintf("%s@%s:%s", r.User, r.Host, remotePath)
 	args = append(args, target, localPath)
 
-	cmd := exec.Command("scp", args...)
+	cmd := exec.CommandContext(ctx, "scp", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return wrapCommandError(cmd.Run())
+}
+
+func wrapCommandError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &clierror.ClassifiedError{Code: clierror.CodeSSHTimeout, Category: "transport", Retryable: true, Err: fmt.Errorf("SSH connection timed out: %w", err)}
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if exitErr.ExitCode() == 255 {
+			return &clierror.ClassifiedError{Code: clierror.CodeSSHUnavailable, Category: "transport", Retryable: true, ExitStatus: 69, Err: err}
+		}
+		return &clierror.ExitError{Code: clierror.CodeRemoteCommand, ExitStatus: exitErr.ExitCode(), Err: err}
+	}
+	return &clierror.ClassifiedError{Code: clierror.CodeSSHUnavailable, Category: "transport", Retryable: true, ExitStatus: 69, Err: err}
 }

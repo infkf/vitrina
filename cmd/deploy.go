@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/infkf/vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/clierror"
 	"github.com/infkf/vitrina/internal/config"
 	"github.com/infkf/vitrina/internal/deploy"
 	"github.com/infkf/vitrina/internal/output"
@@ -34,10 +35,10 @@ The app is reachable at https://<subdomain>.<domain> once containers start.`,
 }
 
 var (
-	deployBranch        string
-	deployTag           string
-	deployQuiet         bool
-	deployZeroDowntime  bool
+	deployBranch       string
+	deployTag          string
+	deployQuiet        bool
+	deployZeroDowntime bool
 )
 
 func init() {
@@ -135,7 +136,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		os.RemoveAll(appDir)
 		return fmt.Errorf("failed to write caddy config: %w", err)
 	}
-	if err := caddy.Validate(); err != nil {
+	if err := caddy.Validate(cfg); err != nil {
 		caddy.RemoveAppConfig(cfg, fqdn)
 		os.RemoveAll(appDir)
 		return fmt.Errorf("caddy validation failed — changes rolled back:\n%w", err)
@@ -172,8 +173,8 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	buildTimer := output.StartTimer("Starting containers")
-	if err := deploy.ComposeUp(appDir, deployQuiet); err != nil {
-		_ = deploy.ComposeCommand(appDir, "down", "-v")
+	if err := deploy.ComposeUpContext(cmd.Context(), appDir, deployQuiet); err != nil {
+		_ = deploy.ComposeCommandContext(cmd.Context(), appDir, "down")
 		store.Remove(subdomain)
 		caddy.RemoveAppConfig(cfg, fqdn)
 		os.RemoveAll(appDir)
@@ -181,9 +182,8 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	buildTimer.Stop()
 
-	if err := caddy.Reload(); err != nil {
-		output.Warnf("app deployed but Caddy reload failed: %v\nRun 'vitrina list' to verify, then reload Caddy manually.", err)
-		return nil
+	if err := caddy.Reload(cfg); err != nil {
+		return &clierror.ClassifiedError{Code: clierror.CodePartial, Category: "partial-success", Retryable: true, Err: fmt.Errorf("app deployed but Caddy reload failed: %w", err)}
 	}
 
 	output.Successf("Deployed: https://%s", fqdn)

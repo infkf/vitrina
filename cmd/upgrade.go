@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -45,7 +46,7 @@ func runUpgrade(cmd *cobra.Command, args []string) error {
 	}
 
 	if name != "" {
-		return runRemoteUpgrade(name)
+		return runRemoteUpgrade(cmd.Context(), name)
 	}
 	return runLocalUpgrade()
 }
@@ -79,7 +80,7 @@ func runLocalUpgrade() error {
 	return nil
 }
 
-func runRemoteUpgrade(remoteName string) error {
+func runRemoteUpgrade(ctx context.Context, remoteName string) error {
 	cfg, err := remote.Load()
 	if err != nil {
 		return err
@@ -102,21 +103,21 @@ func runRemoteUpgrade(remoteName string) error {
 	fmt.Printf("Upgrading vitrina on %s (%s)...\n", remoteName, r.Host)
 
 	fmt.Println("Uploading binary...")
-	if err := remote.UploadFile(r, binaryPath, "/tmp/vitrina"); err != nil {
+	if err := remote.UploadFileContext(ctx, r, binaryPath, "/tmp/vitrina"); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
-	installCmd := fmt.Sprintf("install -m 0755 /tmp/vitrina %s", r.VitrinaPath)
-	if err := remote.RunCommand(r, installCmd); err != nil {
+	installCmd := fmt.Sprintf("install -m 0755 /tmp/vitrina %s", remote.Quote(r.VitrinaPath))
+	if err := remote.RunCommandContext(ctx, r, installCmd); err != nil {
 		return fmt.Errorf("install failed: %w", err)
 	}
 
-	_ = remote.RunCommand(r, "rm /tmp/vitrina")
+	_ = remote.RunCommandContext(ctx, r, "rm /tmp/vitrina")
 
-	_ = remote.RunCommand(r, fmt.Sprintf("%s __record-version", r.VitrinaPath))
+	_ = remote.RunCommandContext(ctx, r, fmt.Sprintf("%s __record-version", remote.Quote(r.VitrinaPath)))
 
-	verifyCmd := fmt.Sprintf("%s --version", r.VitrinaPath)
-	out, err := remote.RunCommandCaptured(r, verifyCmd)
+	verifyCmd := fmt.Sprintf("%s --version", remote.Quote(r.VitrinaPath))
+	out, err := remote.RunCommandCapturedContext(ctx, r, verifyCmd)
 	if err != nil {
 		output.Warnf("binary replaced but verification failed: %v", err)
 	} else {

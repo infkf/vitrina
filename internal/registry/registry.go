@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/infkf/vitrina/internal/atomicfile"
 	"github.com/infkf/vitrina/internal/config"
 )
 
@@ -33,6 +35,26 @@ type Store struct {
 
 type data struct {
 	Apps map[string]*App `json:"apps"`
+}
+
+func (s *Store) lockFile() (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(s.path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+func unlockFile(f *os.File) {
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = f.Close()
 }
 
 func New() *Store {
@@ -72,7 +94,7 @@ func (s *Store) save(d *data) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal registry: %w", err)
 	}
-	if err := os.WriteFile(s.path, raw, 0644); err != nil {
+	if err := atomicfile.Write(s.path, raw, 0600); err != nil {
 		return fmt.Errorf("failed to write registry to %s: %w", s.path, err)
 	}
 	return nil
@@ -81,6 +103,11 @@ func (s *Store) save(d *data) error {
 func (s *Store) Add(app *App) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := s.lockFile()
+	if err != nil {
+		return fmt.Errorf("lock registry: %w", err)
+	}
+	defer unlockFile(lock)
 
 	d, err := s.load()
 	if err != nil {
@@ -108,6 +135,11 @@ func (s *Store) Add(app *App) error {
 func (s *Store) Update(app *App) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := s.lockFile()
+	if err != nil {
+		return fmt.Errorf("lock registry: %w", err)
+	}
+	defer unlockFile(lock)
 
 	d, err := s.load()
 	if err != nil {
@@ -131,6 +163,11 @@ func (s *Store) Update(app *App) error {
 func (s *Store) Remove(subdomain string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := s.lockFile()
+	if err != nil {
+		return fmt.Errorf("lock registry: %w", err)
+	}
+	defer unlockFile(lock)
 
 	d, err := s.load()
 	if err != nil {
@@ -177,6 +214,11 @@ func isPortInUse(port int) bool {
 func (s *Store) NextFreePort(startAt int) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := s.lockFile()
+	if err != nil {
+		return 0, fmt.Errorf("lock registry: %w", err)
+	}
+	defer unlockFile(lock)
 
 	d, err := s.load()
 	if err != nil {

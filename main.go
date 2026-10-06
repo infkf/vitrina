@@ -1,7 +1,11 @@
 package main
 
-import "github.com/infkf/vitrina/cmd"
+import (
+	"os"
+
+	"github.com/infkf/vitrina/cmd"
+)
 
 func main() {
-	cmd.Execute()
+	os.Exit(cmd.Execute())
 }

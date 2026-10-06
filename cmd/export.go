@@ -23,7 +23,10 @@ var exportCmd = &cobra.Command{
 	RunE:  runExport,
 }
 
+var exportIncludeSecrets bool
+
 func init() {
+	exportCmd.Flags().BoolVar(&exportIncludeSecrets, "include-secrets", false, "Include .env files in the backup (unsafe unless the archive is encrypted)")
 	rootCmd.AddCommand(exportCmd)
 }
 
@@ -60,14 +63,18 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Generating export on %s...\n", name)
 	remoteOut := "/tmp/vitrina-export.tar.gz"
-	
-	script := fmt.Sprintf(`%s export %s`, r.VitrinaPath, remoteOut)
-	if err := remote.RunScript(r, script); err != nil {
+
+	quotedPath := remote.Quote(r.VitrinaPath)
+	script := fmt.Sprintf(`%s export %s`, quotedPath, remoteOut)
+	if exportIncludeSecrets {
+		script = fmt.Sprintf(`%s export %s --include-secrets`, quotedPath, remoteOut)
+	}
+	if err := remote.RunScriptContext(cmd.Context(), r, script); err != nil {
 		return fmt.Errorf("remote export failed: %w", err)
 	}
 
 	fmt.Printf("Downloading export to %s...\n", outPath)
-	if err := remote.DownloadFile(r, remoteOut, absOut); err != nil {
+	if err := remote.DownloadFileContext(cmd.Context(), r, remoteOut, absOut); err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 
@@ -142,7 +149,7 @@ func runLocalExport(outPath string) error {
 				return nil
 			}
 
-			if strings.HasSuffix(info.Name(), ".caddy") || info.Name() == ".env" {
+			if strings.HasSuffix(info.Name(), ".caddy") || (exportIncludeSecrets && info.Name() == ".env") {
 				rel, _ := filepath.Rel(sourceDir, path)
 				return addFileToTar(path, filepath.Join(tarPrefix, rel))
 			}

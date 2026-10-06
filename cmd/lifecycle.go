@@ -42,7 +42,7 @@ func buildLifecycleCmd(action string) *cobra.Command {
 			}
 
 			fmt.Printf("Running docker compose %s for %s...\n", action, subdomain)
-			if err := deploy.ComposeCommand(appDir, action); err != nil {
+			if err := deploy.ComposeCommandContext(cmd.Context(), appDir, action); err != nil {
 				return fmt.Errorf("failed to %s app: %w", action, err)
 			}
 			return nil

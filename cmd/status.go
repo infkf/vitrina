@@ -50,7 +50,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	var errMsg string
 
 	if deploy.HasDockerCompose(appDir) || deploy.HasDockerfile(appDir) {
-		out, err := deploy.ComposePS(appDir, jsonOutput)
+		out, err := deploy.ComposePSContext(cmd.Context(), appDir, jsonOutput)
 		if err != nil {
 			errMsg = fmt.Sprintf("docker compose ps failed: %v", err)
 		} else if jsonOutput && len(out) > 0 {

@@ -26,6 +26,11 @@ Each internal package has `_test.go` files. Run tests with:
 go test ./...
 ```
 
+The CLI supports a command-wide deadline with `--timeout` (default `30m`).
+Machine clients should use `--json`; failures use an
+`{ok:false,error:{code,message,exit_status}}` envelope. Keep human progress
+output separate from machine-readable stdout when integrating the CLI.
+
 The binary lives at `./vitrina` after build.
 
 ## Architecture
@@ -39,7 +44,7 @@ cmd/            Cobra commands — user-facing logic, argument parsing
   remove.go     Deregister an app and remove its Caddy snippet
   list.go       Tabular view of registered apps; optional TCP health check
   deploy.go     Clone a git repo and wire it up end-to-end
-  redeploy.go   git pull (auto-recovers from force-push) + docker compose up --build + caddy reload; -q suppresses build output; --force uses fetch+reset
+  redeploy.go   git sync when available (auto-recovers from force-push) + docker compose up --build + caddy reload; -q suppresses build output; --force uses fetch+reset
   push.go       Deploy a local directory directly to a remote VPS
   env.go        Manage secure environment variables for an app
   lifecycle.go  Stop, start, and restart an app's containers
@@ -59,12 +64,14 @@ cmd/            Cobra commands — user-facing logic, argument parsing
 internal/
   config/       Reads/writes /etc/vitrina/config.json (domain, email, paths)
   registry/     Thread-safe JSON store for /etc/vitrina/apps.json; supports Add, Remove, Update, Get, List
-  caddy/        Snippet management, caddy validate, reload (3 fallback methods), ListAppConfigs
+  caddy/        Snippet management, configurable Caddyfile validation/reload (3 fallback methods), ListAppConfigs
   scaffold/     Boilerplate generators: docker-compose.yml, systemd .service
   deploy/       Git helpers (CloneRepo, PullLatest with force-push recovery, ForcePull), Procfile parser, docker-compose generator, ComposeUp (quiet mode), ComposeRestart, ComposeIsRunning, env helpers
-  remote/       SSH remote profile store; Execute, RunScript, RunCommand, UploadFile
+  remote/       SSH remote profile store; context-aware SSH/SCP execution with keepalives
   mcp/          MCP server exposing Vitrina commands as tools for AI agents; all handlers shell out to the vitrina binary (no duplicated local logic)
   output/       ANSI color helpers (Red, Green, Yellow, Bold, Dim), icons (✔/✖/⚠/ℹ), HealthStatus coloring, StartTimer/Stop for long operations
+  atomicfile/   Atomic, fsync-backed replacement for state and secret files
+  clierror/     Stable machine-readable error codes and exit statuses
   version/      ldflags-injected Version, Commit, BuildTime; String() returns formatted version
 ```
 
@@ -102,6 +109,10 @@ vitrina -r prod env set <subdomain> --apply
 ```
 Writes to `.env` AND restarts containers immediately. Do NOT chain `env set --apply` + `redeploy` — the restart happens automatically.
 
+`env list` redacts values by default. Use `env list <subdomain> --show-values`
+only when necessary. Prefer protected files or stdin for automation instead of
+putting secrets in shell arguments and history.
+
 ### Removing an app
 ```bash
 vitrina -r prod remove <subdomain>      # registry + Caddy only
@@ -127,14 +138,15 @@ vitrina -r prod list --health    # are apps routing and healthy?
 vitrina -r prod status <sub>     # detailed status, git info, containers
 vitrina -r prod ps               # which containers are running?
 vitrina -r prod logs <sub> --tail 20  # check for errors
+vitrina -r prod status <sub> --json  # machine-readable state
 ```
 
 ## Filesystem Layout (production)
 
 ```
-/etc/vitrina/config.json              # {domain, email, caddy_conf_dir, apps_dir}
+/etc/vitrina/config.json              # {domain, email, caddyfile, caddy_conf_dir, apps_dir}
 /etc/vitrina/apps.json                # {"apps": {"sub": {subdomain, fqdn, port, created_at, scaffold, git_url, git_ref, last_deployed_at, env_keys}}}
-/etc/vitrina/apps/<subdomain>/        # Cloned repo + generated docker-compose.yml / .env
+/etc/vitrina/apps/<subdomain>/        # Cloned repo + generated docker-compose.yml / .env (0600)
 /etc/vitrina/apps/<subdomain>/.vitrina.json  # Marker file: subdomain, fqdn, port, managed_by, deployed_by
 /etc/caddy/Caddyfile                  # Main config, imports conf.d/*
 /etc/caddy/conf.d/<fqdn>.caddy        # One reverse_proxy block per app
@@ -148,11 +160,11 @@ vitrina -r prod logs <sub> --tail 20  # check for errors
 | `init` | — | `-d/--domain`, `-e/--email` (required) | Must run once before any other command |
 | `add` | `<subdomain> [port]` | `-s/--scaffold` (docker\|systemd\|none) | Port auto-assigned from 3000 if omitted |
 | `remove` | `<subdomain>` | `-c/--clean` | Removes snippet + registry entry |
-| `list` | — | `--health` (TCP + HTTP), `--public` (HTTPS with TLS cert days) | Tabwriter-formatted table |
+| `list` | — | `--health` (TCP + HTTP), `--public` (HTTPS with TLS cert days), `--json` | Tabwriter or machine-readable output |
 | `deploy` | `<subdomain> <git-url>` | `--branch`, `--tag`, `-q/--quiet`, `-z/--zero-downtime` | Clone → compose → Caddy → up; `-q` suppresses build output, prints timing summary; `-z` does blue/green swap |
 | `redeploy` | `<subdomain>` | `--branch`, `--tag`, `-q/--quiet`, `--force`, `-z/--zero-downtime` | Pull/checkout → docker compose up --build → caddy reload; `--force` uses fetch+reset (also auto-triggered on divergence); `-z` does blue/green swap |
 | `push` | `<subdomain> [local_dir]` | — | Package and deploy a local directory directly |
-| `env` | `list\|set\|unset <subdomain>` | `set/unset: --apply` | Manage secure environment variables; `--apply` calls `ComposeRestart` immediately after |
+| `env` | `list\|set\|unset <subdomain>` | `list: --show-values`; `set/unset: --apply` | Manage environment variables; values are redacted by default |
 | `status` | `<subdomain>` | `--json` | Show consolidated app metadata and container state |
 | `stop/start/restart` | `<subdomain>` | — | Manage app container lifecycle without rebuilding |
 | `logs` | `<subdomain> [service...]` | `-f`, `--tail`, `--since`, `-a/--all` | docker compose logs passthrough; `--all` streams from all apps |
@@ -162,7 +174,7 @@ vitrina -r prod logs <sub> --tail 20  # check for errors
 | `doctor` | — | `--heal` | Diagnose inconsistencies; `--heal` auto-fixes |
 | `reload` | — | — | Reload Caddy (retry TLS certs, pick up DNS changes) |
 | `config update` | — | `--domain`, `--email` | Modify `/etc/vitrina/config.json` |
-| `export` | `[output.tar.gz]` | — | Archive registry, configs, and envs |
+| `export` | `[output.tar.gz]` | `--include-secrets` | Archive registry and configs; `.env` files are excluded by default |
 | `import` | `<input.tar.gz>` | — | Restore state from archive |
 | `upgrade` | — | `--binary` | Rebuild from source and replace local or remote vitrina binary |
 | `mcp` | — | — | Start MCP server for AI agent integration |
@@ -227,9 +239,12 @@ Port contract: `PORT=<assigned>` is set in the container environment and mapped 
 
 ## Safety / Error Handling
 
-- `add` and `deploy` write the Caddy snippet, validate with `caddy validate`, and only commit to the registry if validation passes. On any failure after that point, changes are rolled back in reverse order.
+- Registry and configuration writes use temporary files, fsync, and atomic rename. Registry mutations also use a filesystem lock for cross-process coordination.
+- `add` and `deploy` write the Caddy snippet, validate with the configured Caddyfile, and only commit to the registry if validation passes.
 - `remove` validates after snippet deletion; restores snippet if the resulting config is broken.
 - `caddy reload` has 3 fallbacks: `caddy reload`, `systemctl reload caddy`, `pkill -USR1 caddy`.
+- SSH and Docker subprocess entry points accept command contexts; remote connections use keepalives and bounded connection attempts.
+- Local and remote `push` operations stage extracted files and restore the previous app if redeploy fails. Compose cleanup does not remove volumes implicitly.
 - Subdomain validated via RFC 1035 regex. Ports 80/443 are rejected.
 - Duplicate subdomain and port collisions detected against the registry.
 - All mutating commands require root (`os.Geteuid() == 0`).
@@ -262,24 +277,24 @@ The remote package exposes three SSH helpers (all apply sudo when `UseSudo && Us
 - Go stdlib preferred over external dependencies. Only `cobra`, `pflag`, and `mcp-go` are imported.
 - Errors are returned, not panic'd. Commands use `RunE` and write to `cmd.ErrOrStderr()` for non-fatal warnings.
 - JSON files use `json.MarshalIndent` with 2-space indent.
-- File permissions: dirs 0755, files 0644.
+- File permissions: dirs 0755, normal files 0644, registry/config/secret files 0600.
 - `subdomainRegex` and `requireRoot()` are defined once in the `cmd` package and shared across all command files.
 
-## Areas of Growth
+## Deferred Areas of Growth
 
-### 1. Hardcoded paths in caddy validate/reload
+### 1. Durable deployment journal and generations
 
-`caddy.Validate()` and `caddy.Reload()` hardcode `/etc/caddy/Caddyfile` while `caddy.WriteAppConfig()` and `caddy.WriteMainCaddyfile()` derive paths from `*config.Config`. If `Config.CaddyConfDir` ever changes, validate/reload will silently use the wrong path. Fix: pass `*config.Config` (or the main Caddyfile path) into `Validate()` and `Reload()` so all paths are derived from a single source of truth.
+Push now stages files and restores the previous directory on redeploy failure. A full deployment journal with generation-based blue/green promotion, durable phases, and automatic rollback remains future work.
 
 ### 2. Shared helpers lack a home
 
 `subdomainRegex` and `requireRoot()` are defined ad-hoc in command files and shared implicitly across `cmd/`. As more commands are added, this pattern scatters validation logic. Consider a `cmd/validate.go` or `internal/cli/` package that collects shared CLI helpers (regexes, root checks, flag parsers) in one place.
 
-### 3. No structured logging or verbosity control
+### 3. Structured logging and verbosity control
 
 All output uses `fmt.Printf` / `fmt.Fprintf`. There is no `-v/--verbose` flag and no log levels. For debugging production issues on a remote VPS, a simple `log`-based approach with verbosity levels would make `vitrina logs` and error tracing far more useful. Consider a lightweight `internal/log` package wrapping `log.Logger` with level filtering.
 
-### 4. Error context in remote operations
+### 4. Richer remote error context and resumable transfer
 
 `remote.RunCommand` and `remote.RunScript` return raw command exit codes but limited context about which step failed. Enriching remote errors with the SSH command that failed, the remote host, and truncated stderr would make debugging bootstrap/deploy failures significantly easier.
 
@@ -287,6 +302,6 @@ All output uses `fmt.Printf` / `fmt.Fprintf`. There is no `-v/--verbose` flag an
 
 `deploy.PullLatest` matches English error strings (`"diverged"`, `"untracked"`, etc.) to trigger the `forcePull` fallback. A Git configured with a non-English locale will emit different messages and the automatic recovery silently fails. Fix: use exit codes or check `git status --porcelain` instead of parsing stderr strings.
 
-### 6. No `--json` output on mutating commands
+### 6. Complete machine-readable success output
 
-Only `list`, `ps`, `status`, and `env list` support the `--json` flag. The MCP server currently passes `--json` to these 4 commands; the other 10 mutating/informational commands lack structured output. Adding `--json` to `add`, `deploy`, `redeploy`, `remove`, `env set`, `env unset`, lifecycle, `doctor`, and `config health-path` would give MCP clients structured success/failure information.
+Failures now have a stable JSON envelope and global command deadlines. Query commands provide structured JSON; complete structured success envelopes for every mutating command remain future work because several commands still emit legacy human progress directly.

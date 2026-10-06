@@ -24,7 +24,7 @@ func init() {
 	rootCmd.AddCommand(psCmd)
 }
 
-func runPS(_ *cobra.Command, _ []string) error {
+func runPS(cmd *cobra.Command, _ []string) error {
 	if err := requireRoot(); err != nil {
 		return err
 	}
@@ -59,14 +59,14 @@ func runPS(_ *cobra.Command, _ []string) error {
 
 	for _, app := range apps {
 		appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
-		
+
 		var raw json.RawMessage
 		var errMsg string
 
 		if _, err := os.Stat(appDir); os.IsNotExist(err) {
 			errMsg = "no app directory — registered via 'add', not 'deploy'"
 		} else {
-			out, err := deploy.ComposePS(appDir, jsonOutput)
+			out, err := deploy.ComposePSContext(cmd.Context(), appDir, jsonOutput)
 			if err != nil {
 				errMsg = fmt.Sprintf("docker compose ps failed: %v", err)
 			} else if jsonOutput && len(out) > 0 {

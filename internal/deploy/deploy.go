@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/infkf/vitrina/internal/atomicfile"
 )
 
 // CloneRepo clones repoURL into dir. When quiet, git progress is suppressed.
@@ -43,6 +46,13 @@ func Fetch(dir string, quiet bool) error {
 		cmd.Stderr = os.Stderr
 	}
 	return cmd.Run()
+}
+
+// IsGitRepository reports whether dir contains a Git work tree.
+// The .git entry may be either a directory or a file for worktrees/submodules.
+func IsGitRepository(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil && (info.IsDir() || info.Mode().IsRegular())
 }
 
 // PullLatest runs git pull in dir, or fetches and checkouts if ref is a tag.
@@ -197,7 +207,7 @@ func WriteEnvFile(dir string, port int) error {
 	existing, err := os.ReadFile(envPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return os.WriteFile(envPath, []byte(portLine+"\n"), 0644)
+			return atomicfile.Write(envPath, []byte(portLine+"\n"), 0600)
 		}
 		return fmt.Errorf("failed to read %s: %w", envPath, err)
 	}
@@ -213,7 +223,7 @@ func WriteEnvFile(dir string, port int) error {
 	if !foundPort {
 		lines = append(lines, portLine)
 	}
-	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644)
+	return atomicfile.Write(envPath, []byte(strings.Join(lines, "\n")), 0600)
 }
 
 // ReadEnvFile parses the .env file in dir.
@@ -277,7 +287,7 @@ func SetEnvVars(dir string, vars map[string]string) error {
 		}
 	}
 
-	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0644)
+	return atomicfile.Write(envPath, []byte(strings.Join(lines, "\n")), 0600)
 }
 
 // UnsetEnvVars removes specific keys from dir/.env.
@@ -311,7 +321,7 @@ func UnsetEnvVars(dir string, keys []string) error {
 		newLines = append(newLines, line)
 	}
 
-	return os.WriteFile(envPath, []byte(strings.Join(newLines, "\n")), 0644)
+	return atomicfile.Write(envPath, []byte(strings.Join(newLines, "\n")), 0600)
 }
 
 // WriteCompose generates docker-compose.yml for subdomain at port.
@@ -379,7 +389,11 @@ func WriteCompose(dir, subdomain string, port int, pf Procfile) error {
 // When quiet, output is suppressed and a timing summary is printed instead.
 // On failure in quiet mode, captured output is shown to aid debugging.
 func ComposeUp(dir string, quiet bool) error {
-	cmd := exec.Command("docker", "compose", "up", "-d", "--build")
+	return ComposeUpContext(context.Background(), dir, quiet)
+}
+
+func ComposeUpContext(ctx context.Context, dir string, quiet bool) error {
+	cmd := exec.CommandContext(ctx, "docker", "compose", "up", "-d", "--build")
 	cmd.Dir = dir
 	if !quiet {
 		cmd.Stdout = os.Stdout
@@ -401,7 +415,11 @@ func ComposeUp(dir string, quiet bool) error {
 // ComposeRestart runs docker compose up -d (without --build) to apply
 // configuration changes such as updated env vars without rebuilding images.
 func ComposeRestart(dir string, quiet bool) error {
-	cmd := exec.Command("docker", "compose", "up", "-d")
+	return ComposeRestartContext(context.Background(), dir, quiet)
+}
+
+func ComposeRestartContext(ctx context.Context, dir string, quiet bool) error {
+	cmd := exec.CommandContext(ctx, "docker", "compose", "up", "-d")
 	cmd.Dir = dir
 	if !quiet {
 		cmd.Stdout = os.Stdout
@@ -495,11 +513,15 @@ func ComposeLogsPipe(dir string, follow bool, tail, since string, services []str
 
 // ComposePS runs docker compose ps in dir.
 func ComposePS(dir string, formatJSON bool) ([]byte, error) {
+	return ComposePSContext(context.Background(), dir, formatJSON)
+}
+
+func ComposePSContext(ctx context.Context, dir string, formatJSON bool) ([]byte, error) {
 	args := []string{"compose", "ps"}
 	if formatJSON {
 		args = append(args, "--format", "json")
 	}
-	cmd := exec.Command("docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = dir
 	if formatJSON {
 		return cmd.Output()
@@ -522,8 +544,12 @@ func ComposeIsRunning(dir string) bool {
 
 // ComposeCommand executes a generic docker compose command in dir.
 func ComposeCommand(dir string, args ...string) error {
+	return ComposeCommandContext(context.Background(), dir, args...)
+}
+
+func ComposeCommandContext(ctx context.Context, dir string, args ...string) error {
 	cmdArgs := append([]string{"compose"}, args...)
-	cmd := exec.Command("docker", cmdArgs...)
+	cmd := exec.CommandContext(ctx, "docker", cmdArgs...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -558,7 +584,11 @@ func ComposeUpWithPort(dir, projectName string, port, oldPort int, quiet bool) e
 	content := strings.ReplaceAll(string(data), ":"+oldPortStr+":"+oldPortStr, ":"+portStr+":"+portStr)
 	content = strings.ReplaceAll(content, "PORT="+oldPortStr, "PORT="+portStr)
 
-	tmpFile, err := os.CreateTemp("", fmt.Sprintf("%s-compose-*.yml", projectName))
+	tmpDir := filepath.Join(dir, ".vitrina")
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
+		return fmt.Errorf("failed to create compose staging directory: %w", err)
+	}
+	tmpFile, err := os.CreateTemp(tmpDir, fmt.Sprintf("%s-compose-*.yml", projectName))
 	if err != nil {
 		return fmt.Errorf("failed to create temp compose file: %w", err)
 	}
@@ -571,6 +601,7 @@ func ComposeUpWithPort(dir, projectName string, port, oldPort int, quiet bool) e
 	tmpFile.Close()
 
 	cmd := exec.Command("docker", "compose",
+		"--project-directory", dir,
 		"--project-name", projectName,
 		"-f", tmpPath,
 		"up", "-d", "--build",
@@ -609,7 +640,7 @@ func findComposeFile(dir string) string {
 func ComposeDownProject(dir, projectName string) error {
 	cmd := exec.Command("docker", "compose",
 		"--project-name", projectName,
-		"down", "-v",
+		"down",
 	)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
@@ -649,17 +680,25 @@ func ComposeIsRunningProject(dir, projectName string) bool {
 
 // WaitForPort polls a TCP port until it accepts connections or timeout is reached.
 func WaitForPort(port int, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
+	return WaitForPortContext(context.Background(), port, timeout)
+}
+
+func WaitForPortContext(ctx context.Context, port int, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	for time.Now().Before(deadline) {
+	for {
 		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 		if err == nil {
 			conn.Close()
 			return nil
 		}
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("port %d did not become ready within %v: %w", port, timeout, ctx.Err())
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
-	return fmt.Errorf("port %d did not become ready within %v", port, timeout)
 }
 
 // BlueGreenDeploy performs a zero-downtime deploy:
@@ -715,7 +754,7 @@ func WriteVitrinaMarker(dir string, marker *VitrinaMarker) error {
 		return fmt.Errorf("failed to marshal .vitrina.json: %w", err)
 	}
 	path := filepath.Join(dir, ".vitrina.json")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := atomicfile.Write(path, data, 0644); err != nil {
 		return fmt.Errorf("failed to write %s: %w", path, err)
 	}
 	return nil

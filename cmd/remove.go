@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/infkf/vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/clierror"
 	"github.com/infkf/vitrina/internal/config"
 	"github.com/infkf/vitrina/internal/deploy"
 	"github.com/infkf/vitrina/internal/output"
@@ -40,6 +42,9 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	subdomain := args[0]
+	if removeClean && !confirmDestructive && !dryRun {
+		return &clierror.ClassifiedError{Code: clierror.CodeInteraction, Category: "safety", Err: fmt.Errorf("--clean is destructive; re-run with --yes or --dry-run")}
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -52,12 +57,28 @@ func runRemove(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if dryRun {
+		plan := map[string]any{
+			"dry_run": true,
+			"planned_changes": []map[string]any{
+				{"action": "remove", "target": filepath.Join(cfg.CaddyConfDir, app.FQDN+".caddy")},
+			},
+			"risk":                  "destructive",
+			"requires_confirmation": removeClean,
+		}
+		if removeClean {
+			plan["planned_changes"] = append(plan["planned_changes"].([]map[string]any), map[string]any{"action": "destroy", "target": "docker.volumes"}, map[string]any{"action": "delete", "target": filepath.Join(cfg.AppsDir, subdomain)})
+		}
+		data, _ := json.Marshal(plan)
+		fmt.Fprintln(cmd.OutOrStdout(), string(data))
+		return nil
+	}
 
 	if err := caddy.RemoveAppConfig(cfg, app.FQDN); err != nil {
 		return err
 	}
 
-	if err := caddy.Validate(); err != nil {
+	if err := caddy.Validate(cfg); err != nil {
 		if writeErr := caddy.WriteAppConfig(cfg, app.FQDN, app.Port); writeErr != nil {
 			return fmt.Errorf("removal caused config error AND rollback failed:\n  config error: %w\n  rollback error: %v", err, writeErr)
 		}
@@ -69,7 +90,7 @@ func runRemove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("registry removal failed — caddy config restored: %w", err)
 	}
 
-	if err := caddy.Reload(); err != nil {
+	if err := caddy.Reload(cfg); err != nil {
 		output.Warnf("app removed from config but Caddy reload failed: %v\nRun 'caddy reload --config /etc/caddy/Caddyfile' manually.", err)
 	} else {
 		output.Successf("Removed: %s (was routing to localhost:%d)", app.FQDN, app.Port)

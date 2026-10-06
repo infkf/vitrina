@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/infkf/vitrina/internal/caddy"
+	"github.com/infkf/vitrina/internal/clierror"
 	"github.com/infkf/vitrina/internal/config"
 	"github.com/infkf/vitrina/internal/deploy"
 	"github.com/infkf/vitrina/internal/output"
@@ -22,11 +23,11 @@ var redeployCmd = &cobra.Command{
 }
 
 var (
-	redeployBranch        string
-	redeployTag           string
-	redeployQuiet         bool
-	redeployForce         bool
-	redeployZeroDowntime  bool
+	redeployBranch       string
+	redeployTag          string
+	redeployQuiet        bool
+	redeployForce        bool
+	redeployZeroDowntime bool
 )
 
 func init() {
@@ -58,7 +59,12 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 
 	appDir := filepath.Join(cfg.AppsDir, app.Subdomain)
 
-	if redeployBranch != "" {
+	if !deploy.IsGitRepository(appDir) {
+		if redeployBranch != "" || redeployTag != "" || redeployForce {
+			return fmt.Errorf("app %q is not a Git repository; branch, tag, and force options require Git", subdomain)
+		}
+		fmt.Println("No Git repository found - skipping Git sync")
+	} else if redeployBranch != "" {
 		fmt.Printf("Checking out branch %q...\n", redeployBranch)
 		if err := deploy.Fetch(appDir, redeployQuiet); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: git fetch failed: %v\n", err)
@@ -125,11 +131,11 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 			if err := caddy.WriteAppConfig(cfg, app.FQDN, greenPort); err != nil {
 				return fmt.Errorf("caddy config write: %w", err)
 			}
-			if err := caddy.Validate(); err != nil {
+			if err := caddy.Validate(cfg); err != nil {
 				caddy.WriteAppConfig(cfg, app.FQDN, app.Port)
 				return fmt.Errorf("caddy validation: %w", err)
 			}
-			if err := caddy.Reload(); err != nil {
+			if err := caddy.Reload(cfg); err != nil {
 				caddy.WriteAppConfig(cfg, app.FQDN, app.Port)
 				return fmt.Errorf("caddy reload: %w", err)
 			}
@@ -150,13 +156,13 @@ func runRedeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	buildTimer := output.StartTimer("Rebuilding containers")
-	if err := deploy.ComposeUp(appDir, redeployQuiet); err != nil {
+	if err := deploy.ComposeUpContext(cmd.Context(), appDir, redeployQuiet); err != nil {
 		return fmt.Errorf("docker compose up failed: %w", err)
 	}
 	buildTimer.Stop()
 
-	if err := caddy.Reload(); err != nil {
-		output.Warnf("Caddy reload failed: %v", err)
+	if err := caddy.Reload(cfg); err != nil {
+		return &clierror.ClassifiedError{Code: clierror.CodePartial, Category: "partial-success", Retryable: true, Err: fmt.Errorf("containers rebuilt but Caddy reload failed: %w", err)}
 	}
 
 	app.LastDeployedAt = time.Now().UTC().Format(time.RFC3339)
